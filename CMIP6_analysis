@@ -1,0 +1,1301 @@
+##############################packages
+library(reshape2)
+library(tidyverse)
+library(bootstrap)
+library(QuantPsyc)  
+library(relaimpo)
+library(psych)
+library(ggplot2)
+library(nlme)
+library(ape)
+library(MuMIn)
+library(ggstatsplot)
+library(extrafont)
+windowsFonts(Times=windowsFont("TT Arial"))
+
+##############################import
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+data<-read.table("CMIP6_558.csv",header=T, na.strings = "Na", sep=",")
+data = na.omit(data)
+data$AI_1901_1950 = 1/data$DI_1901_1950
+data$AI_2051_2100 = 1/data$DI_2051_2100
+data$WY_1901_1950 = 1-data$EI_1901_1950
+data$WY_2051_2100 = 1-data$EI_2051_2100
+
+data = data %>% filter( data$WY_2051_2100 > 0 & data$WY_1901_1950 > 0 
+& data$EI_1901_1950 < data$DI_1901_1950 & data$EI_2051_2100 < data$DI_2051_2100)
+
+
+data_sub = data %>% dplyr::select(UID,WY_1901_1950,AI_1901_1950)
+num_b = nrow(data_sub)
+####################################################1:represent 1901-1950
+f <- function(x,WY,AI) {
+  (WY)+((AI)^(-1))-(1+(AI)^(-x))^(1/x)
+}
+
+w = {}
+ID = {}
+for(i in 1:num_b){    
+  dt_sub= data_sub[i,]   
+  res <- uniroot(f, interval = c(0,100),extendInt = "yes", WY=dt_sub$WY_1901_1950,AI = dt_sub$AI_1901_1950)$root
+  w = rbind(w,res)
+  ID = rbind(ID,dt_sub$UID)
+}
+budyko_w_1 = cbind(ID,w)
+budyko_w_1 = as.data.frame(budyko_w_1)
+colnames(budyko_w_1) = c("UID","m_1")
+
+##########
+data_sub_1 = merge(data_sub,budyko_w_1)
+data_sub_1 = data_sub_1 %>% filter( data_sub_1$m_1 > 1)
+
+sensitivity <- function(AI,m) {
+  s = -((1+(AI)^(-m))^(1/m))*((1/(m^2))*log(1+(AI)^(-m))+
+                                   (1/m)*((AI)^(-m))*((log(AI))/(1+(AI)^(-m))))
+  return(s)
+}
+
+
+res <- sensitivity(AI = data_sub_1$AI_1901_1950,m=data_sub_1$m_1)
+res_sen_1 = cbind(data_sub_1$UID,res)
+colnames(res_sen_1) = c("UID","sen_1")
+##########
+data_sub_1 = merge(data_sub,budyko_w_1)
+data_sub_1 = data_sub_1 %>% filter( data_sub_1$m_1 > 1)
+
+sensitivity_climate <- function(AI,m) {
+  s =  (AI)^(-2)-(((AI)^(-m-1))*((1+(AI)^(-m))^((1-m)/m)))
+  return(s)
+}
+
+res_climate <- sensitivity_climate(AI = data_sub_1$AI_1901_1950,m=data_sub_1$m_1)
+res_sen_climate_1 = cbind(data_sub_1$UID,res_climate)
+colnames(res_sen_climate_1) = c("UID","cli_1")
+################################################################x:m y:P/PET
+cal_m_2 = function (x,y) {
+  s = (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * log((y)) * 
+                                               log((y))) + 1/x^2 * ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^((1/x) - 
+                                                                                                               1) * (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(((1/x) - 
+                                                                                                                                                                         1) - 1) * (((1/x) - 1) * ((y)^(-x) * log((y))))) * ((1/x) * 
+                                                                                                                                                                                                                               ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^(1/x) * (log((1 + 
+                                                                                                                                                                                                                                                                                        (y)^(-x))) * (2 * x/(x^2)^2) + (y)^(-x) * log((y))/(1 + (y)^(-x)) * 
+                                                                                                                                                                                                                                                                                   (1/x^2)) + ((1 + (y)^(-x))^(1/x) * (log((1 + (y)^(-x))) * 
+                                                                                                                                                                                                                                                                                                                         (1/x^2)) + (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * 
+                                                                                                                                                                                                                                                                                                                                                                             log((y))))) * (log((1 + (y)^(-x))) * (1/x^2)))
+  return (s)
+}
+
+cal_cli_2 = function (x,y) {
+  s = (1 + (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                1) * (-x))) * ((1/x) * ((y)^((-x) - 1) * (-x))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                    1) * ((1/x) * ((y)^(((-x) - 1) - 1) * ((-x) - 1) * (-x))) - 
+    (y)^(((-1) - 1) - 1) * ((-1) - 1) * (-1)
+  return (s)
+}
+
+cal_cli_m = function (x,y) {
+  s = -((1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^((-x) - 1) * (-x))) * 
+          (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(1/x) * 
+          ((y)^((-x) - 1) * (-x)/(1 + (y)^(-x)) * (1/x^2)) + ((1 + 
+                                                                 (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                                                                      1) * (-x))) * ((1/x) * ((y)^(-x) * log((y)))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                                                                        1) * ((1/x) * ((y)^((-x) - 1) * (-x) * log((y)) + (y)^(-x) * 
+                                                                                                                                                                                                         (1/(y))))))
+  return (s)
+}
+
+res_1_m_2 <- cal_m_2(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_1_m_2 = cbind(data_sub_1$UID,res_1_m_2)
+colnames(res_1_m_2) = c("UID","m2_1")
+res_1_cli_2 <- cal_cli_2(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_1_cli_2 = cbind(data_sub_1$UID,res_1_cli_2)
+colnames(res_1_cli_2) = c("UID","cli2_1")
+res_m_cli <- cal_cli_m(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_m_cli= cbind(data_sub_1$UID,res_m_cli)
+colnames(res_m_cli) = c("UID","cli_m_1")
+
+
+data_final_1 = cbind(data_sub_1,res_1_m_2,res_1_cli_2,res_m_cli,res_sen_climate_1,res_sen_1)
+
+
+################################################
+################################################# calculated the value for the two period
+############################################################
+data_sub = data %>% dplyr::select(UID,WY_2051_2100,AI_2051_2100)
+
+f <- function(x,WY,AI) {
+  (WY)+((AI)^(-1))-(1+(AI)^(-x))^(1/x)
+}
+
+w = {}
+ID = {}
+for(i in 1:num_b){    
+  dt_sub= data_sub[i,]   
+  res <- uniroot(f, interval = c(0, 100),extendInt = "yes", WY=dt_sub$WY_2051_2100,AI = dt_sub$AI_2051_2100)$root
+  w = rbind(w,res)
+  ID = rbind(ID,dt_sub$UID)
+}
+budyko_w_2 = cbind(ID,w)
+budyko_w_2 = as.data.frame(budyko_w_2)
+colnames(budyko_w_2) = c("UID","m_2")
+############
+data_sub_2 = merge(data_sub,budyko_w_2)
+data_sub_2 = data_sub_2 %>% filter( data_sub_2$m_2 > 1)
+
+sensitivity <- function(AI,m) {
+  s = -((1+(AI)^(-m))^(1/m))*((1/(m^2))*log(1+(AI)^(-m))+
+                                (1/m)*((AI)^(-m))*((log(AI))/(1+(AI)^(-m))))
+  return(s)
+}
+
+
+res <- sensitivity(AI = data_sub_2$AI_2051_2100,m=data_sub_2$m_2)
+res_sen_2 = cbind(data_sub_2$UID,res)
+colnames(res_sen_2) = c("UID","sen_2")
+##########
+data_sub_2 = merge(data_sub,budyko_w_2)
+data_sub_2 = data_sub_2 %>% filter( data_sub_2$m_2 > 1)
+
+sensitivity_climate <- function(AI,m) {
+  s =  (AI)^(-2)-(((AI)^(-m-1))*((1+(AI)^(-m))^((1-m)/m)))
+  return(s)
+}
+
+res_climate <- sensitivity_climate(AI = data_sub_2$AI_2051_2100,m=data_sub_2$m_2)
+res_sen_climate_2 = cbind(data_sub_2$UID,res_climate)
+colnames(res_sen_climate_2) = c("UID","cli_2")
+################################################################x:m y:P/PET
+cal_m_2 = function (x,y) {
+  s = (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * log((y)) * 
+                                               log((y))) + 1/x^2 * ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^((1/x) - 
+                                                                                                               1) * (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(((1/x) - 
+                                                                                                                                                                         1) - 1) * (((1/x) - 1) * ((y)^(-x) * log((y))))) * ((1/x) * 
+                                                                                                                                                                                                                               ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^(1/x) * (log((1 + 
+                                                                                                                                                                                                                                                                                        (y)^(-x))) * (2 * x/(x^2)^2) + (y)^(-x) * log((y))/(1 + (y)^(-x)) * 
+                                                                                                                                                                                                                                                                                   (1/x^2)) + ((1 + (y)^(-x))^(1/x) * (log((1 + (y)^(-x))) * 
+                                                                                                                                                                                                                                                                                                                         (1/x^2)) + (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * 
+                                                                                                                                                                                                                                                                                                                                                                             log((y))))) * (log((1 + (y)^(-x))) * (1/x^2)))
+  return (s)
+}
+
+cal_cli_2 = function (x,y) {
+  s = (1 + (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                1) * (-x))) * ((1/x) * ((y)^((-x) - 1) * (-x))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                    1) * ((1/x) * ((y)^(((-x) - 1) - 1) * ((-x) - 1) * (-x))) - 
+    (y)^(((-1) - 1) - 1) * ((-1) - 1) * (-1)
+  return (s)
+}
+
+cal_cli_m = function (x,y) {
+  s = -((1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^((-x) - 1) * (-x))) * 
+          (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(1/x) * 
+          ((y)^((-x) - 1) * (-x)/(1 + (y)^(-x)) * (1/x^2)) + ((1 + 
+                                                                 (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                                                                      1) * (-x))) * ((1/x) * ((y)^(-x) * log((y)))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                                                                        1) * ((1/x) * ((y)^((-x) - 1) * (-x) * log((y)) + (y)^(-x) * 
+                                                                                                                                                                                                         (1/(y))))))
+  return (s)
+}
+
+res_1_m_2 <- cal_m_2(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_1_m_2 = cbind(data_sub_2$UID,res_1_m_2)
+colnames(res_1_m_2) = c("UID","m2_2")
+res_1_cli_2 <- cal_cli_2(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_1_cli_2 = cbind(data_sub_2$UID,res_1_cli_2)
+colnames(res_1_cli_2) = c("UID","cli2_2")
+res_m_cli <- cal_cli_m(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_m_cli= cbind(data_sub_2$UID,res_m_cli)
+colnames(res_m_cli) = c("UID","cli_m_2")
+
+
+data_final_2 = merge(data_sub_2,res_1_m_2,res_1_cli_2,res_m_cli,res_sen_climate_2,res_sen_2)
+
+#######################
+data_final = cbind(data_final_1,data_final_2)
+# write.csv(data_final, "CMIP6_parameter.csv",row.names=F)
+###################################################################Budyko_curves for this two periods
+##############################import
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+data<-read.table("CMIP6_558.csv",header=T, na.strings = "Na", sep=",")
+data = na.omit(data)
+data$AI_1901_1950 = 1/data$DI_1901_1950
+data$AI_2051_2100 = 1/data$DI_2051_2100
+data$WY_1901_1950 = 1-data$EI_1901_1950
+data$WY_2051_2100 = 1-data$EI_2051_2100
+data$DI = (data$DI_2051_2100+data$DI_1901_1950)/2
+
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data$Zone <- sapply(data$DI, ApplyQuintiles1)
+
+data = data %>% filter( data$WY_2051_2100 > 0 & data$WY_1901_1950 > 0 
+                        & data$EI_1901_1950 < data$DI_1901_1950 & data$EI_2051_2100 < data$DI_2051_2100)
+
+
+f_pf1 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-3.24))^(1/3.24)
+}
+
+
+f_pf2 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-2.54))^(1/2.54)
+}
+###########################
+f1 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-1.5))^(1/1.5)
+}
+
+f2 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-2))^(1/2)
+}
+
+f3 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-3))^(1/3)
+}
+
+f4 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-11))^(1/11)
+}
+#################################
+ggplot(data = data) +
+  geom_point(aes(x=AI_1901_1950,y=WY_1901_1950),size=0.6,shape =1,color = "#DF150B") +
+  geom_point(aes(x=AI_2051_2100,y=WY_2051_2100),size=0.6,shape =4,color = "#00777A") +
+  stat_function(fun=f_pf1, geom="line", colour = "#F8756D",size = 1) +
+  stat_function(fun=f_pf2, geom="line", colour = "#00BFC2",size = 1) + 
+  stat_function(fun=f1, geom="line",size = 1) +
+  stat_function(fun=f2, geom="line", size = 1) +
+  stat_function(fun=f3, geom="line", size = 1) +
+  stat_function(fun=f4, geom="line", size = 1) +
+  theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black") )
+################################################
+data_1 = data %>% filter(data$Zone == "Humid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:124))
+
+data_2 = data %>% filter(data$Zone == "Humid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:124))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "Semi-humid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:62))
+
+data_2 = data %>% filter(data$Zone == "Semi-humid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:62))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "semi-arid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:83))
+
+data_2 = data %>% filter(data$Zone == "semi-arid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:83))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "Arid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:11))
+
+data_2 = data %>% filter(data$Zone == "Arid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:11))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################################
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+dta$DI_1901_1950 = 1/dta$AI_1901_1950
+dta$DI_2051_2100 = 1/dta$AI_2051_2100
+
+Qpart <- function(e1,e2,x2,x1) {
+  s = ((e1+e2)/2)*(x2-x1)
+  return(s)
+}
+
+Q_m <- Qpart(e1=dta$sen_1,e2=dta$sen_2,x2 = dta$m_2,x1 = dta$m_1)
+
+Q_cli <- Qpart(e1=dta$cli_1,e2=dta$cli_2,x2 = dta$AI_2051_2100,x1 = dta$AI_1901_1950)
+
+data_Q_all = cbind(dta,Q_m,Q_cli)
+
+data_Q_all$C_m = abs(data_Q_all$Q_m)/(abs(data_Q_all$Q_m)+abs(data_Q_all$Q_cli))
+data_Q_all$C_cli = abs(data_Q_all$Q_cli)/(abs(data_Q_all$Q_m)+abs(data_Q_all$Q_cli))
+data_Q_all$delta_WY = data_Q_all$WY_2051_2100 - data_Q_all$WY_1901_1950
+
+data_Q_all$DI = (data_Q_all$DI_2051_2100+data_Q_all$DI_1901_1950)/2
+write.csv(data_Q_all, "CMIP6_contribution_Q.csv",row.names=F)
+
+##############################################
+setwd("E:\\Global_Stablity\\CMIP6_data")
+data_Q_all<-read.table("CMIP6_contribution_Q.csv",header=T, na.strings = "Na", sep=",")
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data_Q_all$AI_Zone <- sapply(data_Q_all$DI, ApplyQuintiles1)
+
+############################
+ggplot(data =data_Q_all,aes(x = AI_Zone,y=Diff_contribution))+
+  geom_boxplot()+ theme_bw()+
+  labs(x="Climate zones", y = "Cm - CP/PET")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+ggplot(data =data_Q_all,aes(x = AI_Zone,y=C_cli))+
+  geom_boxplot()+ theme_bw()+
+  labs(x="Climate zones", y = "Contribution of cli")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+##########################
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(delta_WY, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(delta_WY, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate zones", y = "Δ R/P (cli)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+pairwise.wilcox.test(data_Q_all$delta_WY,data_Q_all$AI_Zone,p.adjust.method="none")
+pairwise.wilcox.test(data_Q_all$Q_m,data_Q_all$AI_Zone,p.adjust.method="none")
+pairwise.wilcox.test(data_Q_all$Q_cli,data_Q_all$AI_Zone,p.adjust.method="none")
+
+
+
+
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(Q_cli, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(Q_cli, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate zones", y = "Δ R/P (cli)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(WY_1901_1950, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(WY_1901_1950, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(WY_2051_2100, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(WY_2051_2100, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "m")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#####################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m2_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m2_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m2_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m2_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d2(R/P)/dm2")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#######################################
+########################################
+#########################################
+########################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d(R/P)/d(P/PET)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli2_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli2_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli2_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli2_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="", y = "d2(R/P)/d(P/PET)2")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#####################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_m_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_m_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_m_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_m_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d2(R/P)/dmd(P/PET)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#######################################
+
+
+
+
+
+wilcox.test(data_Q_all$cli2_1,data_Q_all$cli2_2)
+
+wilcox.test(data_Q_all$m2_1,data_Q_all$m2_2)
+
+wilcox.test(data_Q_all$cli_m_1,data_Q_all$cli_m_2)
+
+wilcox.test(data_Q_all$cli_1,data_Q_all$cli_2)
+
+wilcox.test(data_Q_all$m_1,data_Q_all$m_2)
+
+wilcox.test(data_Q_all,data_Q_all$sen_2)
+
+##########################################################################################merge an index like JSDI
+##############################packages
+library(reshape2)
+library(tidyverse)
+library(bootstrap)
+library(QuantPsyc)  
+library(relaimpo)
+library(psych)
+library(ggplot2)
+library(nlme)
+library(ape)
+library(MuMIn)
+library(ggstatsplot)
+library(extrafont)
+windowsFonts(Times=windowsFont("TT Arial"))
+library(fitdistrplus)
+library(copula)
+library(CDVineCopulaConditional)
+library(VineCopula) 
+library(spcopula)
+library(CDVine)
+library(rvinecopulib)
+
+setwd("E:\\Global_Stablity\\CMIP6_data\\Questions")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+data_period1_1 = dta %>% dplyr::select(UID,WY_1901_1950,AI_1901_1950,m_1)
+data_period1_2 = dta %>% dplyr::select(UID,sen_1,cli_1,m2_1,cli2_1)
+
+#############PCA_period1_pca1_pca2
+data_period1_PCA1 <- prcomp(data_period1_1[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA1$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA1 = data_period1_PCA1$x[,1:2]
+
+#############PCA_period1_pca3_pca4
+data_period1_PCA2 <- prcomp(data_period1_2[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA2$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA2 = data_period1_PCA2$x[,1:2]
+##############
+best_fit_dist<-function (x,x1=10,x2=0.5) { 
+  set.seed(1)
+  # we know these data are normally distributed... 
+  
+  # let's compute some fits...
+  require(MASS)
+  dat=x
+  normal<-tryCatch({  fitdist(dat,"norm",method = "mle")}, 
+                   error = function(err) {return(NA)})
+  
+  gamma<-tryCatch({ fitdist(dat,"gamma",method = "mle")}, 
+                  error = function(err) {return(NA)})
+  
+  lognormal<-tryCatch({  fitdist(dat,"lnorm",method = "mle")}, 
+                      error = function(err) {return(NA)})
+  
+  weibull<-tryCatch({ fitdist(dat,"weibull",method = "mle")}, 
+                    error = function(err) {return(NA)})
+  
+  
+  
+  fits=list( normal, gamma, lognormal,weibull )
+  sim={}
+  p_value={}
+  for (i in 1:4 ) { 
+    if   (!is.na (fits[[ i]][1])  ) {  
+      #sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      #p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue )
+      p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue                
+                     
+      )
+    } else {
+      sim=cbind(sim, NA )
+      p_value=cbind(p_value,NA)
+      
+    }
+  }
+  chi=rbind(sim, p_value)
+  
+  
+  colnames(chi)<- c('normal',"gamma", "lognormal",'Weibull' )
+  # get the logliks for each model...
+  #max_log=sapply(fits, function(i) i$loglik)
+  #max_index<- which.max( max_log )
+  max_index<- which.min( sim)
+  
+  #max_index=5
+  paras=fits[[max_index]]
+  if (max_index==1) {
+    
+    v_cdf=pnorm(x,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v1=pnorm(x1,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v2=qnorm(x2,mean=paras$estimate[1],sd=paras$estimate[2] )
+    
+  } else if (max_index==4) {
+    v_cdf=pweibull(x,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v1=pweibull(x1,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v2=qweibull(x2,shape=paras$estimate[1],scale=paras$estimate[2] )
+    
+    
+    
+  }      else if (max_index==2) {
+    
+    v_cdf=pgamma(x,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v1=pgamma(x1,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v2=qgamma(x2,shape=paras$estimate[1],rate=paras$estimate[2] )
+  }      else if (max_index==3) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }    
+  
+  results<-list (v_cdf=v_cdf,v1=v1,v2=v2 , chi=chi)
+  return(results)
+  
+  
+}    
+####  
+# margin = function(x){
+#   
+# fit_n  <- fitdistr(x, "normal")
+# 
+# marginals = pnorm(x, mean=fit_n$estimate[1], sd=fit_n$estimate[2])
+# 
+# return(marginals)
+# }
+
+CDVineCopSelect <- function(data, familyset = NA, type, selectioncrit = "AIC", indeptest = FALSE, level = 0.05) {
+  
+  d <- dim(data)[2]
+  n <- nrow(data)
+  if (any(data > 1) || any(data < 0)) 
+    stop("Data has be in the interval [0,1].")
+  
+  if (n < 2) 
+    stop("Number of observations has to be at least 2.")
+  if (d < 3) 
+    stop("Dimension has to be at least 3.")
+  if (!is.na(familyset[1])) 
+    for (i in 1:length(familyset)) if (!(familyset[i] %in% c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13, 14, 
+                                                             16, 17, 18, 19, 20, 23, 24, 26, 27, 28, 29, 30, 33, 34, 36, 37, 38, 39, 40))) 
+      stop("Copula family not implemented.")
+  if (selectioncrit != "AIC" && selectioncrit != "BIC") 
+    stop("Selection criterion not implemented.")
+  if (level < 0 & level > 1) 
+    stop("Significance level has to be between 0 and 1.")
+  
+  if (type == "CVine") 
+    type <- 1 else if (type == "DVine") 
+      type <- 2
+  if (type != 1 & type != 2) 
+    stop("Vine model not implemented.")
+  
+  rhoMat <- matrix(0, nrow = d - 1, ncol = d - 1)
+  nuMat <- matrix(0, nrow = d - 1, ncol = d - 1)
+  w <- matrix(0, d - 1, d - 1)
+  
+  if (type == 1) {
+    # C-Vine
+    v <- array(0, c(d - 1, d - 1, n))
+    
+    for (i in 1:(d - 1)) {
+      par.out <- BiCopSelect(data[, 1], data[, i + 1], familyset, selectioncrit, indeptest, level)
+      w[1, i] <- par.out$family
+      rhoMat[1, i] <- par.out$par
+      nuMat[1, i] <- par.out$par2
+      
+      v[1, i, ] <- .C("Hfunc1", as.integer(w[1, i]), as.integer(n), as.double(data[, i + 1]), as.double(data[, 
+                                                                                                             1]), as.double(rhoMat[1, i]), as.double(nuMat[1, i]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+    }
+    for (j in 2:(d - 1)) {
+      for (i in 1:(d - j)) {
+        par.out <- BiCopSelect(v[j - 1, 1, ], v[j - 1, i + 1, ], familyset, selectioncrit, indeptest, 
+                               level)
+        w[j, i] <- par.out$family
+        rhoMat[j, i] <- par.out$par
+        nuMat[j, i] <- par.out$par2
+        
+        if (j < (d - 1)) {
+          v[j, i, ] <- .C("Hfunc1", as.integer(w[j, i]), as.integer(n), as.double(v[j - 1, i + 1, 
+          ]), as.double(v[j - 1, 1, ]), as.double(rhoMat[j, i]), as.double(nuMat[j, i]), as.double(rep(0, 
+                                                                                                       n)), PACKAGE = "CDVine")[[7]]
+        }
+      }
+    }
+  } else {
+    # D-Vine
+    v <- array(0, c(d, 2 * d - 4, n))
+    
+    for (i in 1:(d - 1)) {
+      par.out <- BiCopSelect(data[, i], data[, i + 1], familyset, selectioncrit, indeptest, level)
+      w[1, i] <- par.out$family
+      rhoMat[1, i] <- par.out$par
+      nuMat[1, i] <- par.out$par2
+      
+    }
+    v[1, 1, ] <- .C("Hfunc2", as.integer(w[1, 1]), as.integer(n), as.double(data[, 1]), as.double(data[, 
+                                                                                                       2]), as.double(rhoMat[1, 1]), as.double(nuMat[1, 1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+    if (d > 3) {
+      for (k in 1:(d - 3)) {
+        v[1, 2 * k, ] <- .C("Hfunc1", as.integer(w[1, k + 1]), as.integer(n), as.double(data[, k + 
+                                                                                               2]), as.double(data[, k + 1]), as.double(rhoMat[1, k + 1]), as.double(nuMat[1, k + 1]), 
+                            as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+        v[1, 2 * k + 1, ] <- .C("Hfunc2", as.integer(w[1, k + 1]), as.integer(n), as.double(data[, 
+                                                                                                 k + 1]), as.double(data[, k + 2]), as.double(rhoMat[1, k + 1]), as.double(nuMat[1, k + 
+                                                                                                                                                                                   1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+      }
+    }
+    v[1, 2 * d - 4, ] <- .C("Hfunc1", as.integer(w[1, d - 1]), as.integer(n), as.double(data[, d]), as.double(data[, 
+                                                                                                                   d - 1]), as.double(rhoMat[1, d - 1]), as.double(nuMat[1, d - 1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+    for (j in 2:(d - 1)) {
+      for (i in 1:(d - j)) {
+        par.out <- BiCopSelect(v[j - 1, 2 * i - 1, ], v[j - 1, 2 * i, ], familyset, selectioncrit, 
+                               indeptest, level)
+        w[j, i] <- par.out$family
+        rhoMat[j, i] <- par.out$par
+        nuMat[j, i] <- par.out$par2
+        
+      }
+      v[j, 1, ] <- .C("Hfunc2", as.integer(w[j, 1]), as.integer(n), as.double(v[j - 1, 1, ]), as.double(v[j - 
+                                                                                                            1, 2, ]), as.double(rhoMat[j, 1]), as.double(nuMat[j, 1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+      if (d > 4 & (d - j - 2) > 0) {
+        for (i in 1:(d - j - 2)) {
+          v[j, 2 * i, ] <- .C("Hfunc1", as.integer(w[j, i + 1]), as.integer(n), as.double(v[j - 1, 
+                                                                                            2 * i + 2, ]), as.double(v[j - 1, 2 * i + 1, ]), as.double(rhoMat[j, i + 1]), as.double(nuMat[j, 
+                                                                                                                                                                                          i + 1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+          v[j, 2 * i + 1, ] <- .C("Hfunc2", as.integer(w[j, i + 1]), as.integer(n), as.double(v[j - 
+                                                                                                  1, 2 * i + 1, ]), as.double(v[j - 1, 2 * i + 2, ]), as.double(rhoMat[j, i + 1]), as.double(nuMat[j, 
+                                                                                                                                                                                                   i + 1]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+        }
+      }
+      v[j, 2 * d - 2 * j - 2, ] <- .C("Hfunc1", as.integer(w[j, d - j]), as.integer(n), as.double(v[j - 
+                                                                                                      1, 2 * d - 2 * j, ]), as.double(v[j - 1, 2 * d - 2 * j - 1, ]), as.double(rhoMat[j, d - j]), 
+                                      as.double(nuMat[j, d - j]), as.double(rep(0, n)), PACKAGE = "CDVine")[[7]]
+    }
+  }
+  
+  theta0 <- rep(0, d * (d - 1)/2)
+  fam0 <- rep(0, d * (d - 1)/2)
+  k <- 1
+  for (j in 1:(d - 1)) {
+    for (i in 1:(d - j)) {
+      fam0[k] <- w[j, i]
+      theta0[k] <- rhoMat[j, i]
+      k <- k + 1
+    }
+  }
+  
+  tt <- sum(fam0 == 2) + sum(fam0 == 7) + sum(fam0 == 8) + sum(fam0 == 9) + sum(fam0 == 10) + sum(fam0 == 
+                                                                                                    17) + sum(fam0 == 18) + sum(fam0 == 19) + sum(fam0 == 20) + sum(fam0 == 27) + sum(fam0 == 28) + sum(fam0 == 
+                                                                                                                                                                                                          29) + sum(fam0 == 30) + sum(fam0 == 37) + sum(fam0 == 38) + sum(fam0 == 39) + sum(fam0 == 40)
+  nu0 <- rep(0, tt)
+  k <- 1
+  for (j in 1:(d - 1)) {
+    for (i in 1:(d - j)) {
+      if (w[j, i] %in% c(2, 7:10, 17:20, 27:30, 37:40)) {
+        nu0[k] <- nuMat[j, i]
+        k <- k + 1
+      }
+    }
+  }
+  
+  nu1 <- numeric()
+  kk <- 1
+  dd <- d * (d - 1)/2
+  for (k in 1:dd) {
+    if (fam0[k] %in% c(2, 7:10, 17:20, 27:30, 37:40)) {
+      nu1[k] <- nu0[kk]
+      kk <- kk + 1
+    } else {
+      nu1[k] <- 0
+    }
+  }
+  
+  out <- list(family = fam0, par = theta0, par2 = nu1)
+  return(out)
+} 
+
+
+
+data_period1_PCA2 = apply(data_period1_PCA2,2,best_fit_dist)
+data_period1_PCA1 = apply(data_period1_PCA1,2,best_fit_dist)
+
+data_period1_PCA2 = cbind(data_period1_PCA2$PC1$v_cdf,data_period1_PCA2$PC2$v_cdf)
+data_period1_PCA1 = cbind(data_period1_PCA1$PC1$v_cdf,data_period1_PCA1$PC2$v_cdf)
+
+data_final_margin = cbind(data_period1_PCA1,data_period1_PCA2) %>% as.data.frame()
+colnames(data_final_margin) = c("basin_PCA1","basin_PCA2","sen_PCA1","sen_PCA2")
+CVM = RVineStructureSelect(data_final_margin, type="CVine")
+fit= vinecop(data_final_margin, family_set =c("archimedean","gaussian"),cores=2)
+pcs=fit$pair_copulas
+mat=fit$structure
+vc <- vinecop_dist(pcs, mat)
+u1<-pvinecop(data_final_margin[,], vc)
+####################################################
+Calc_Emp_Prob <- function(D) {
+  # Length of data
+  n = length(D)
+  # Pre-assign probability array
+  P = zeros(n,1)
+  
+  # Loop through the data
+  for (i in 1:n) {
+    P[i,1] = sum( D <= D[i] )
+  }
+  
+  # Gringorten plotting position
+  Y = (P - 0.44) / (n + 0.12)
+  
+}
+
+# fit univariate cdf, select from 13 cdf candidate (no error)
+fitalldist <- function(data,X1) {
+  
+  require(fitdistrplus)
+  require(extRemes)
+  require(ismev)
+  require(SCI) 
+  require(goft)
+  require(gPdtest)
+  require(actuar)
+  require(evd)
+  
+  # change the same data value slightly
+  
+  # dup_data <- duplicated(data)
+  # for (i in 1:length(dup_data)) {
+  #   if (dup_data[i] == 0) {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],0,0.001)
+  #   } else {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],-0.001,0.001)
+  #   }
+  # }
+  
+  # calculate empirical CDF
+  emp <- Calc_Emp_Prob(data)
+  
+  # total 13 distributions
+  distnames <- c("gamma","exponential","weibull","normal","logistic",
+                 "log-normal","log-logistic","cauchy",
+                 "generalized extreme value","generalized pareto",
+                 "inverse gaussian")
+  
+  results <- data.frame('aic' = numeric(), 'aicc' = numeric(), 
+                        'bic' = numeric(), 'p' = numeric())
+  
+  ep_mat <- matrix( NA, length(data), 11 )
+  pdf_mat <- matrix(NA, length(data), 11 )
+  V1_mat <- matrix(NA, length(X1), 11 )
+  
+  para_list <- list()
+  
+  loop_id <- 1
+  # distribution not for negative values
+  for (i in c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    if (any(data<0)) {
+      if (i %in% c("gamma","exp","weibull","lnorm","llogis")) {
+        results[loop_id,] <- c(NA,NA,NA,NA)
+        loop_id <- loop_id + 1
+        next
+      } 
+    }
+    
+    possibleError <- tryCatch({fit <- fitdist(data,i)},error = function(e) e)
+    if (!inherits(possibleError, "error")) {
+      fit <- fitdist(data,i)
+      para <- c(as.list(fit$estimate), as.list(fit$fix.arg))
+      para_list[[loop_id]] = para
+      name <- fit$distname
+      pdistname <- paste("p", name, sep = "")
+      ddistname <- paste("d", name, sep = "")
+      # invcdf1name <- paste("q",name,sep = "")
+      
+      ep <- do.call(pdistname, c(list(data), as.list(para)))
+      pdf <- do.call(ddistname, c(list(data), as.list(para)))
+      V1 <- do.call(pdistname, c(list(X1), as.list(para)))
+      # V2 <- do.call(invcdf1name, c(list(X2), as.list(para)))
+      
+      ep_mat[,loop_id] <- ep
+      pdf_mat[,loop_id] <- pdf
+      V1_mat[,loop_id]<-V1
+      
+      aic <- fit$aic
+      aicc <- aic + 2*length(para)*(length(para)+1)/(fit$n-length(para)-1)
+      bic <- fit$bic
+      p <- ks.test(emp,ep)$p
+      
+      results[loop_id,] <- c(aic,aicc,bic,p)
+      loop_id <- loop_id + 1
+    } else {
+      results[loop_id,] <- c(NA,NA,NA,NA)
+      loop_id <- loop_id + 1
+    }
+  }
+  
+  # function to calcuate good-of-fitness 
+  calc_gof <- function(ep, emp, loop_id, results, parlen, name) {
+    res <- ep - emp
+    # sample size
+    k <- length(ep)
+    # number of parameter
+    m <- parlen
+    aic <- k * log(sum(res^2)/k) + 2*m
+    aicc <- aic + 2*m*(m+1)/(k-m-1)
+    bic <- k * log(sum(res^2)/k) + m * log(k)
+    p <- suppressWarnings(ks.test(emp,ep)$p)
+    results[loop_id,] <<- c(aic, aicc, bic, p)
+    
+    loop_id <<- loop_id + 1
+  }
+  
+  # gumbel
+  
+  # possibleError <- tryCatch({fitgumb <- dist.start(data,"gumbel")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitgumb <- dist.start(data,"gumbel")
+  #   ep <- actuar::pgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   V1 <- actuar::pgumbel(X1, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   pdf <- actuar::dgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   para_list[[loop_id]] = list( alpha = fitgumb$loc, scale = fitgumb$scale )
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "gumbel"
+  #   calc_gof(ep, emp, loop_id, results, 2, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # generalized extreme value
+  possibleError <- tryCatch({fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')
+    gevpar <- fitgev$results
+    ep <- evd::pgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    pdf <- evd::dgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    V1<-evd::pgev(X1, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    para_list[[loop_id]] = list(shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    name <- "gev"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  ## generalized pareto, use min(data) as the threshold of gpd
+  possibleError <- tryCatch({fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')
+    gpdpar <- fitgpd$results
+    ep <- evd::pgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    pdf <- evd::dgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    V1 <- evd::pgpd(X1, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    para_list[[loop_id]] = list(loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "gpd"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  # Three-parameter Gamma (Pearson Type III)
+  # possibleError <- tryCatch({fitpe3 <- dist.start(data,"pe3")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitpe3 <- dist.start(data,"pe3")
+  #   ep <- SCI::ppe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   pdf <- SCI::dpe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   V1<-SCI::ppe3(X1, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   para_list[[loop_id]] = list(shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "pe3"
+  #   calc_gof(ep, emp, loop_id, results, 3, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # inverse gaussian
+  possibleError <- tryCatch({fitig <- goft::ig_fit(data)},error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitig <- goft::ig_fit(data)
+    ep <- actuar::pinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    pdf <- actuar::dinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    V1 <- actuar::pinvgauss(X1, mean = fitig[1,1],shape = fitig[2,1])
+    para_list[[loop_id]] = list( mean = fitig[1,1],shape = fitig[2,1] )
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "invgauss"
+    calc_gof(ep, emp, loop_id, results, 2, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  results['family'] = c("gamma","exp","weibull","norm","logis","lnorm","llogis",
+                        "cauchy","gev","gpd","invgauss")
+  
+  # reorder results according to p-value and AIC
+  results2 <- results[!is.na(results$p),]
+  results2 <- results2[order(rank(results2$p), -rank(results2$aic), decreasing = T), ]
+  rownames(results2) <- NULL
+  
+  # output
+  PD_name <- results2[results2$p>0.1,"family"][1]
+  if (is.na(PD_name)) {
+    warning('The fitting of univariate distribution is not significant !')
+    PD_name <- results2[1,'family']
+  }
+  PD_id <- which( results$family == PD_name )
+  ep <- ep_mat[,PD_id]
+  pdf <- pdf_mat[,PD_id]
+  V1 <- V1_mat[,PD_id]
+  
+  para <- para_list[[PD_id]]
+  
+  # check whether any NaN in ep and pdf
+  loop_id = 1
+  while( any(is.na(ep)) | any(is.na(pdf)) | any(is.na(V1)) ) {
+    PD_name <- results2[results2$p>0.1,"family"][loop_id + 1]
+    PD_id <- which( results$family == PD_name )
+    ep <- ep_mat[,PD_id]
+    pdf <- pdf_mat[,PD_id]
+    V1 <- V1_mat[,PD_id]
+  }
+  para <- para_list[[PD_id]]
+  
+  # parameteric bootstrap for uncertainty
+  if (PD_name %in% c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    f1 <- fitdist(data,PD_name)
+    bnor <- bootdist(f1)
+    resboot <- bnor$estim
+  }  else if (PD_name=='gev') {
+    gevpar <- fitgev$results
+    rdata <- evd::rgev(1001*length(data),shape = as.numeric(gevpar[3]),loc =as.numeric(gevpar[1]),scale = as.numeric(gevpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GEV',method = 'Lmoments')
+      par <- res$results
+      return(c(as.numeric(par[3]),as.numeric(par[1]),as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("shape","loc","scale")
+  } else if (PD_name=='gpd') {
+    gpdpar <- fitgpd$results
+    rdata <- evd::rgpd(1001*length(data),loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GP',method = 'Lmoments')
+      par <- res$results
+      return(c(min(rdata[,iter])-1, as.numeric(par[1]), as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("loc","scale","shape")
+  }  else if (PD_name=='invgauss') {
+    rdata <- actuar::rinvgauss(1001*length(data), mean = fitig[1,1],shape = fitig[2,1])
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- goft::ig_fit(rdata[,iter])
+      return(c(res[1,1],res[2,1]))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("mean","shape")
+  }
+  
+  return(list("PD_name"=PD_name,"ep"=ep,"v1"=V1,"pdf"=pdf, "emp"=emp, "STAT"=results2, "para"=para, parboot=resboot))
+  
+}
+
+
+cdf_u1<-fitalldist(u1,1)$ep
+
+
+############################################
+n <- 280*4 # 
+U <- rCopula(n,vine)
+X <- qnorm(U)
+K.n <- Kn(cdf_u1, x=X)
+
+inverse_normal={}
+inverse_normal<-qnorm(K.n, mean=0, sd =1)
