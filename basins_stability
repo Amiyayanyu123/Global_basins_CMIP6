@@ -1,0 +1,2233 @@
+##############################packages
+library(reshape2)
+library(tidyverse)
+library(bootstrap)
+library(QuantPsyc)  
+library(relaimpo)
+library(psych)
+library(ggplot2)
+library(nlme)
+library(ape)
+library(MuMIn)
+library(ggstatsplot)
+library(extrafont)
+windowsFonts(Times=windowsFont("TT Arial"))
+
+##############################import
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+data<-read.table("CMIP6_558.csv",header=T, na.strings = "Na", sep=",")
+data = na.omit(data)
+data$AI_1901_1950 = 1/data$DI_1901_1950
+data$AI_2051_2100 = 1/data$DI_2051_2100
+data$WY_1901_1950 = 1-data$EI_1901_1950
+data$WY_2051_2100 = 1-data$EI_2051_2100
+
+data = data %>% filter( data$WY_2051_2100 > 0 & data$WY_1901_1950 > 0 
+& data$EI_1901_1950 < data$DI_1901_1950 & data$EI_2051_2100 < data$DI_2051_2100)
+
+
+data_sub = data %>% dplyr::select(UID,WY_1901_1950,AI_1901_1950)
+num_b = nrow(data_sub)
+####################################################1:represent 1901-1950
+f <- function(x,WY,AI) {
+  (WY)+((AI)^(-1))-(1+(AI)^(-x))^(1/x)
+}
+
+w = {}
+ID = {}
+for(i in 1:num_b){    
+  dt_sub= data_sub[i,]   
+  res <- uniroot(f, interval = c(0,100),extendInt = "yes", WY=dt_sub$WY_1901_1950,AI = dt_sub$AI_1901_1950)$root
+  w = rbind(w,res)
+  ID = rbind(ID,dt_sub$UID)
+}
+budyko_w_1 = cbind(ID,w)
+budyko_w_1 = as.data.frame(budyko_w_1)
+colnames(budyko_w_1) = c("UID","m_1")
+
+##########
+data_sub_1 = merge(data_sub,budyko_w_1)
+data_sub_1 = data_sub_1 %>% filter( data_sub_1$m_1 > 1)
+
+sensitivity <- function(AI,m) {
+  s = -((1+(AI)^(-m))^(1/m))*((1/(m^2))*log(1+(AI)^(-m))+
+                                   (1/m)*((AI)^(-m))*((log(AI))/(1+(AI)^(-m))))
+  return(s)
+}
+
+
+res <- sensitivity(AI = data_sub_1$AI_1901_1950,m=data_sub_1$m_1)
+res_sen_1 = cbind(data_sub_1$UID,res)
+colnames(res_sen_1) = c("UID","sen_1")
+##########
+data_sub_1 = merge(data_sub,budyko_w_1)
+data_sub_1 = data_sub_1 %>% filter( data_sub_1$m_1 > 1)
+
+sensitivity_climate <- function(AI,m) {
+  s =  (AI)^(-2)-(((AI)^(-m-1))*((1+(AI)^(-m))^((1-m)/m)))
+  return(s)
+}
+
+res_climate <- sensitivity_climate(AI = data_sub_1$AI_1901_1950,m=data_sub_1$m_1)
+res_sen_climate_1 = cbind(data_sub_1$UID,res_climate)
+colnames(res_sen_climate_1) = c("UID","cli_1")
+################################################################x:m y:P/PET
+cal_m_2 = function (x,y) {
+  s = (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * log((y)) * 
+                                               log((y))) + 1/x^2 * ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^((1/x) - 
+                                                                                                               1) * (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(((1/x) - 
+                                                                                                                                                                         1) - 1) * (((1/x) - 1) * ((y)^(-x) * log((y))))) * ((1/x) * 
+                                                                                                                                                                                                                               ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^(1/x) * (log((1 + 
+                                                                                                                                                                                                                                                                                        (y)^(-x))) * (2 * x/(x^2)^2) + (y)^(-x) * log((y))/(1 + (y)^(-x)) * 
+                                                                                                                                                                                                                                                                                   (1/x^2)) + ((1 + (y)^(-x))^(1/x) * (log((1 + (y)^(-x))) * 
+                                                                                                                                                                                                                                                                                                                         (1/x^2)) + (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * 
+                                                                                                                                                                                                                                                                                                                                                                             log((y))))) * (log((1 + (y)^(-x))) * (1/x^2)))
+  return (s)
+}
+
+cal_cli_2 = function (x,y) {
+  s = (1 + (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                1) * (-x))) * ((1/x) * ((y)^((-x) - 1) * (-x))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                    1) * ((1/x) * ((y)^(((-x) - 1) - 1) * ((-x) - 1) * (-x))) - 
+    (y)^(((-1) - 1) - 1) * ((-1) - 1) * (-1)
+  return (s)
+}
+
+cal_cli_m = function (x,y) {
+  s = -((1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^((-x) - 1) * (-x))) * 
+          (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(1/x) * 
+          ((y)^((-x) - 1) * (-x)/(1 + (y)^(-x)) * (1/x^2)) + ((1 + 
+                                                                 (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                                                                      1) * (-x))) * ((1/x) * ((y)^(-x) * log((y)))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                                                                        1) * ((1/x) * ((y)^((-x) - 1) * (-x) * log((y)) + (y)^(-x) * 
+                                                                                                                                                                                                         (1/(y))))))
+  return (s)
+}
+
+res_1_m_2 <- cal_m_2(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_1_m_2 = cbind(data_sub_1$UID,res_1_m_2)
+colnames(res_1_m_2) = c("UID","m2_1")
+res_1_cli_2 <- cal_cli_2(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_1_cli_2 = cbind(data_sub_1$UID,res_1_cli_2)
+colnames(res_1_cli_2) = c("UID","cli2_1")
+res_m_cli <- cal_cli_m(x=data_sub_1$m_1,y=data_sub_1$AI_1901_1950) %>% as.data.frame 
+res_m_cli= cbind(data_sub_1$UID,res_m_cli)
+colnames(res_m_cli) = c("UID","cli_m_1")
+
+
+data_final_1 = cbind(data_sub_1,res_1_m_2,res_1_cli_2,res_m_cli,res_sen_climate_1,res_sen_1)
+
+
+################################################
+################################################# calculated the value for the two period
+############################################################
+data_sub = data %>% dplyr::select(UID,WY_2051_2100,AI_2051_2100)
+
+f <- function(x,WY,AI) {
+  (WY)+((AI)^(-1))-(1+(AI)^(-x))^(1/x)
+}
+
+w = {}
+ID = {}
+for(i in 1:num_b){    
+  dt_sub= data_sub[i,]   
+  res <- uniroot(f, interval = c(0, 100),extendInt = "yes", WY=dt_sub$WY_2051_2100,AI = dt_sub$AI_2051_2100)$root
+  w = rbind(w,res)
+  ID = rbind(ID,dt_sub$UID)
+}
+budyko_w_2 = cbind(ID,w)
+budyko_w_2 = as.data.frame(budyko_w_2)
+colnames(budyko_w_2) = c("UID","m_2")
+############
+data_sub_2 = merge(data_sub,budyko_w_2)
+data_sub_2 = data_sub_2 %>% filter( data_sub_2$m_2 > 1)
+
+sensitivity <- function(AI,m) {
+  s = -((1+(AI)^(-m))^(1/m))*((1/(m^2))*log(1+(AI)^(-m))+
+                                (1/m)*((AI)^(-m))*((log(AI))/(1+(AI)^(-m))))
+  return(s)
+}
+
+
+res <- sensitivity(AI = data_sub_2$AI_2051_2100,m=data_sub_2$m_2)
+res_sen_2 = cbind(data_sub_2$UID,res)
+colnames(res_sen_2) = c("UID","sen_2")
+##########
+data_sub_2 = merge(data_sub,budyko_w_2)
+data_sub_2 = data_sub_2 %>% filter( data_sub_2$m_2 > 1)
+
+sensitivity_climate <- function(AI,m) {
+  s =  (AI)^(-2)-(((AI)^(-m-1))*((1+(AI)^(-m))^((1-m)/m)))
+  return(s)
+}
+
+res_climate <- sensitivity_climate(AI = data_sub_2$AI_2051_2100,m=data_sub_2$m_2)
+res_sen_climate_2 = cbind(data_sub_2$UID,res_climate)
+colnames(res_sen_climate_2) = c("UID","cli_2")
+################################################################x:m y:P/PET
+cal_m_2 = function (x,y) {
+  s = (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * log((y)) * 
+                                               log((y))) + 1/x^2 * ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^((1/x) - 
+                                                                                                               1) * (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(((1/x) - 
+                                                                                                                                                                         1) - 1) * (((1/x) - 1) * ((y)^(-x) * log((y))))) * ((1/x) * 
+                                                                                                                                                                                                                               ((y)^(-x) * log((y)))) + ((1 + (y)^(-x))^(1/x) * (log((1 + 
+                                                                                                                                                                                                                                                                                        (y)^(-x))) * (2 * x/(x^2)^2) + (y)^(-x) * log((y))/(1 + (y)^(-x)) * 
+                                                                                                                                                                                                                                                                                   (1/x^2)) + ((1 + (y)^(-x))^(1/x) * (log((1 + (y)^(-x))) * 
+                                                                                                                                                                                                                                                                                                                         (1/x^2)) + (1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^(-x) * 
+                                                                                                                                                                                                                                                                                                                                                                             log((y))))) * (log((1 + (y)^(-x))) * (1/x^2)))
+  return (s)
+}
+
+cal_cli_2 = function (x,y) {
+  s = (1 + (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                1) * (-x))) * ((1/x) * ((y)^((-x) - 1) * (-x))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                    1) * ((1/x) * ((y)^(((-x) - 1) - 1) * ((-x) - 1) * (-x))) - 
+    (y)^(((-1) - 1) - 1) * ((-1) - 1) * (-1)
+  return (s)
+}
+
+cal_cli_m = function (x,y) {
+  s = -((1 + (y)^(-x))^((1/x) - 1) * ((1/x) * ((y)^((-x) - 1) * (-x))) * 
+          (log((1 + (y)^(-x))) * (1/x^2)) + (1 + (y)^(-x))^(1/x) * 
+          ((y)^((-x) - 1) * (-x)/(1 + (y)^(-x)) * (1/x^2)) + ((1 + 
+                                                                 (y)^(-x))^(((1/x) - 1) - 1) * (((1/x) - 1) * ((y)^((-x) - 
+                                                                                                                      1) * (-x))) * ((1/x) * ((y)^(-x) * log((y)))) + (1 + (y)^(-x))^((1/x) - 
+                                                                                                                                                                                        1) * ((1/x) * ((y)^((-x) - 1) * (-x) * log((y)) + (y)^(-x) * 
+                                                                                                                                                                                                         (1/(y))))))
+  return (s)
+}
+
+res_1_m_2 <- cal_m_2(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_1_m_2 = cbind(data_sub_2$UID,res_1_m_2)
+colnames(res_1_m_2) = c("UID","m2_2")
+res_1_cli_2 <- cal_cli_2(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_1_cli_2 = cbind(data_sub_2$UID,res_1_cli_2)
+colnames(res_1_cli_2) = c("UID","cli2_2")
+res_m_cli <- cal_cli_m(y = data_sub_2$AI_2051_2100,x=data_sub_2$m_2) %>% as.data.frame 
+res_m_cli= cbind(data_sub_2$UID,res_m_cli)
+colnames(res_m_cli) = c("UID","cli_m_2")
+
+
+data_final_2 = merge(data_sub_2,res_1_m_2,res_1_cli_2,res_m_cli,res_sen_climate_2,res_sen_2)
+
+#######################
+data_final = cbind(data_final_1,data_final_2)
+# write.csv(data_final, "CMIP6_parameter.csv",row.names=F)
+###################################################################Budyko_curves for this two periods
+##############################import
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+data<-read.table("CMIP6_558.csv",header=T, na.strings = "Na", sep=",")
+data = na.omit(data)
+data$AI_1901_1950 = 1/data$DI_1901_1950
+data$AI_2051_2100 = 1/data$DI_2051_2100
+data$WY_1901_1950 = 1-data$EI_1901_1950
+data$WY_2051_2100 = 1-data$EI_2051_2100
+data$DI = (data$DI_2051_2100+data$DI_1901_1950)/2
+
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data$Zone <- sapply(data$DI, ApplyQuintiles1)
+
+data = data %>% filter( data$WY_2051_2100 > 0 & data$WY_1901_1950 > 0 
+                        & data$EI_1901_1950 < data$DI_1901_1950 & data$EI_2051_2100 < data$DI_2051_2100)
+
+
+f_pf1 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-3.24))^(1/3.24)
+}
+
+
+f_pf2 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-2.54))^(1/2.54)
+}
+###########################
+f1 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-1.5))^(1/1.5)
+}
+
+f2 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-2))^(1/2)
+}
+
+f3 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-3))^(1/3)
+}
+
+f4 <- function(x) {
+  -(x)^(-1)+(1+(x)^(-11))^(1/11)
+}
+#################################
+ggplot(data = data) +
+  geom_point(aes(x=AI_1901_1950,y=WY_1901_1950),size=0.6,shape =1,color = "#DF150B") +
+  geom_point(aes(x=AI_2051_2100,y=WY_2051_2100),size=0.6,shape =4,color = "#00777A") +
+  stat_function(fun=f_pf1, geom="line", colour = "#F8756D",size = 1) +
+  stat_function(fun=f_pf2, geom="line", colour = "#00BFC2",size = 1) + 
+  stat_function(fun=f1, geom="line",size = 1) +
+  stat_function(fun=f2, geom="line", size = 1) +
+  stat_function(fun=f3, geom="line", size = 1) +
+  stat_function(fun=f4, geom="line", size = 1) +
+  theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black") )
+################################################
+data_1 = data %>% filter(data$Zone == "Humid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:124))
+
+data_2 = data %>% filter(data$Zone == "Humid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:124))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "Semi-humid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:62))
+
+data_2 = data %>% filter(data$Zone == "Semi-humid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:62))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "semi-arid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:83))
+
+data_2 = data %>% filter(data$Zone == "semi-arid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:83))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+################################################
+data_1 = data %>% filter(data$Zone == "Arid") %>%
+  dplyr::select(WY_1901_1950,AI_1901_1950) %>%
+  rename(WY = WY_1901_1950,AI = AI_1901_1950) %>%
+  transform(cata1 = "2") %>%
+  transform(cata2 = seq(1:11))
+
+data_2 = data %>% filter(data$Zone == "Arid") %>%
+  dplyr::select(WY_2051_2100,AI_2051_2100) %>%
+  rename(WY = WY_2051_2100,AI = AI_2051_2100) %>%
+  transform(cata1 = "1") %>%
+  transform(cata2 = seq(1:11))
+
+data_path = rbind(data_2,data_1)
+
+data_path %>%
+  ggplot(aes(AI,WY,fill=cata1,color=cata1)) +
+  geom_point(aes(color=cata1,shape = cata1),size=0.6) + scale_color_manual(values=c("#DF150B","#00777A"))+scale_shape_manual(values=c(1,4))+
+  geom_path(aes(group = cata2), color="grey", size = 0.2,
+            arrow = arrow(type = "closed",length = unit(0.04, "inches")))+ theme_bw()+labs(x="P/PET", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black"), legend.position="none" )
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################################
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+dta$DI_1901_1950 = 1/dta$AI_1901_1950
+dta$DI_2051_2100 = 1/dta$AI_2051_2100
+
+Qpart <- function(e1,e2,x2,x1) {
+  s = ((e1+e2)/2)*(x2-x1)
+  return(s)
+}
+
+Q_m <- Qpart(e1=dta$sen_1,e2=dta$sen_2,x2 = dta$m_2,x1 = dta$m_1)
+
+Q_cli <- Qpart(e1=dta$cli_1,e2=dta$cli_2,x2 = dta$AI_2051_2100,x1 = dta$AI_1901_1950)
+
+data_Q_all = cbind(dta,Q_m,Q_cli)
+
+data_Q_all$C_m = abs(data_Q_all$Q_m)/(abs(data_Q_all$Q_m)+abs(data_Q_all$Q_cli))
+data_Q_all$C_cli = abs(data_Q_all$Q_cli)/(abs(data_Q_all$Q_m)+abs(data_Q_all$Q_cli))
+data_Q_all$delta_WY = data_Q_all$WY_2051_2100 - data_Q_all$WY_1901_1950
+
+data_Q_all$DI = (data_Q_all$DI_2051_2100+data_Q_all$DI_1901_1950)/2
+write.csv(data_Q_all, "CMIP6_contribution_Q.csv",row.names=F)
+
+##############################################
+# setwd("E:\\Global_Stablity\\CMIP6_data")
+# data_Q_all<-read.table("CMIP6_contribution_Q.csv",header=T, na.strings = "Na", sep=",")
+data_Q_all$m_all = (data_Q_all$m_1 + data_Q_all$m_2)/2
+
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data_Q_all$AI_Zone <- sapply(data_Q_all$DI, ApplyQuintiles1)
+
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,2,1000), 
+      labels=c("high-m","low-m"), include.lowest=TRUE)
+}
+data_Q_all$m_Zone <- sapply(data_Q_all$m_all, ApplyQuintiles1)
+
+
+############################
+ggplot(data =data_Q_all,aes(x = AI_Zone,y=Diff_contribution))+
+  geom_boxplot()+ theme_bw()+
+  labs(x="Climate zones", y = "Cm - CP/PET")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+ggplot(data =data_Q_all,aes(x = m_Zone,y=C_m))+
+  geom_boxplot()+ theme_bw()+
+  labs(x="Climate zones", y = "Contribution of cm")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+wilcox.test(data_Q_all[data_Q_all$m_Zone %in% c("high-m"), ]$C_m,data_Q_all[data_Q_all$m_Zone %in% c("low-m"), ]$C_m)
+##########################
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(delta_WY, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(delta_WY, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate zones", y = "Δ R/P (cli)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+pairwise.wilcox.test(data_Q_all$delta_WY,data_Q_all$AI_Zone,p.adjust.method="none")
+pairwise.wilcox.test(data_Q_all$Q_m,data_Q_all$AI_Zone,p.adjust.method="none")
+pairwise.wilcox.test(data_Q_all$Q_cli,data_Q_all$AI_Zone,p.adjust.method="none")
+
+
+
+
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(Q_cli, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(Q_cli, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate zones", y = "Δ R/P (cli)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=18))
+
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(WY_1901_1950, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(WY_1901_1950, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(WY_2051_2100, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(WY_2051_2100, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "R/P")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "m")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#####################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m2_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m2_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(m2_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(m2_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d2(R/P)/dm2")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#######################################
+########################################
+#########################################
+########################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d(R/P)/d(P/PET)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli2_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli2_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli2_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli2_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="", y = "d2(R/P)/d(P/PET)2")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#####################################
+##############################parameter change
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_m_1, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_m_1, na.rm = TRUE))
+
+stack_1 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_1 = transform(stack_1,cata = "Period1")
+
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(cli_m_2, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(cli_m_2, na.rm = TRUE))
+
+stack_2 = merge(CZ_Zone_mean,CZ_Zone_se)
+stack_2 = transform(stack_2,cata = "Period2")
+
+
+stack = rbind(stack_2,stack_1)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean,fill = cata))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Forest Increase", y = "d2(R/P)/dmd(P/PET)")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+#######################################
+setwd("E:\\Global_Stablity\\CMIP6_data")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+dta$DI_1901_1950 = 1/dta$AI_1901_1950
+dta$DI_2051_2100 = 1/dta$AI_2051_2100
+
+dta$DI = (dta$DI_1901_1950 + dta$DI_2051_2100)/2
+data_Q_all = dta
+
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data_Q_all$AI_Zone <- sapply(data_Q_all$DI, ApplyQuintiles1)
+
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(delta_em, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(delta_em, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate Zone", y = "em")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+##################################################################
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+CZ_Zone_mean = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(delta_ecli, na.rm = TRUE))
+
+CZ_Zone_se = data_Q_all %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(delta_ecli, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate Zone", y = "ecli")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+###############################################################################models
+setwd("E:\\Global_Stablity\\CMIP6_data")
+dta<-read.table("CMIP6_contribution_Q.csv",header=T, na.strings = "Na", sep=",")
+
+library(ggplot2)
+library(ggpmisc)
+
+dta = dta %>% dplyr::select(Q_model,delta_WY)
+
+ggplot(data = dta,aes(x=Q_model,y=delta_WY)) +
+  geom_point(size=1) + geom_smooth(formula = y ~ x,method = "lm")+
+  theme_bw()+labs(x="R/P change by Budyko", y = "R/P change in observation")+
+  theme(axis.text = element_text(face="plain",color="black", size=16),
+        axis.title=element_text(size=16,face="bold",color="black") )+ 
+  stat_poly_line(color = "#DF150B") +
+  stat_poly_eq(aes(label = paste(after_stat(eq.label),
+                                 after_stat(rr.label), sep = "*\", \"*")))
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+wilcox.test(data_Q_all$cli2_1,data_Q_all$cli2_2)
+
+wilcox.test(data_Q_all$m2_1,data_Q_all$m2_2)
+
+wilcox.test(data_Q_all$cli_m_1,data_Q_all$cli_m_2)
+
+wilcox.test(data_Q_all$cli_1,data_Q_all$cli_2)
+
+wilcox.test(data_Q_all$m_1,data_Q_all$m_2)
+
+wilcox.test(data_Q_all,data_Q_all$sen_2)
+
+##########################################################################################merge an index like JSDI
+##############################packages
+library(reshape2)
+library(tidyverse)
+library(bootstrap)
+library(QuantPsyc)  
+library(relaimpo)
+library(psych)
+library(ggplot2)
+library(nlme)
+library(ape)
+library(MuMIn)
+library(ggstatsplot)
+library(extrafont)
+windowsFonts(Times=windowsFont("TT Arial"))
+library(fitdistrplus)
+library(copula)
+library(CDVineCopulaConditional)
+library(VineCopula) 
+library(spcopula)
+library(CDVine)
+library(rvinecopulib)
+
+setwd("E:\\Global_Stablity\\CMIP6_data\\Questions")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+data_period1_1 = dta %>% dplyr::select(UID,WY_1901_1950,AI_1901_1950,m_1)
+data_period1_2 = dta %>% dplyr::select(UID,sen_1,cli_1,m2_1,cli2_1)
+
+#############PCA_period1_pca1_pca2
+data_period1_PCA1 <- prcomp(data_period1_1[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA1$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA1 = data_period1_PCA1$x[,1:2]
+
+#############PCA_period1_pca3_pca4
+data_period1_PCA2 <- prcomp(data_period1_2[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA2$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA2 = data_period1_PCA2$x[,1:2]
+
+hist(data_period1_PCA1[,1])
+hist(data_period1_PCA1[,2])
+
+hist(data_period1_PCA2[,1])
+hist(data_period1_PCA2[,2])
+##############
+x = data_period1_PCA1[,1]
+best_fit_dist<-function (x,x1=10,x2=0.5) { 
+  set.seed(1)
+  # we know these data are normally distributed... 
+  
+  # let's compute some fits...
+  require(MASS)
+  dat=x
+  normal<-tryCatch({  fitdist(dat,"norm",method = "mle")}, 
+                   error = function(err) {return(NA)})
+  
+  gamma<-tryCatch({ fitdist(dat,"gamma",method = "mle")}, 
+                  error = function(err) {return(NA)})
+  
+  lognormal<-tryCatch({  fitdist(dat,"lnorm",method = "mle")}, 
+                      error = function(err) {return(NA)})
+  weibull<-tryCatch({ fitdist(dat,"weibull",method = "mle")}, 
+                    error = function(err) {return(NA)})
+  log_normal<-tryCatch({ fitdist(dat,"log-normal",method = "mle")},
+                       error = function(err) {return(NA)})
+  
+  log_logistic<-tryCatch({ fitdist(dat,"log-logistic",method = "mle")},
+                         error = function(err) {return(NA)})
+  
+  generalized_extreme_value<-tryCatch({ fitdist(dat,"generalized extreme value",method = "mle")},
+                                      error = function(err) {return(NA)})
+  
+  generalized_pareto<-tryCatch({ fitdist(dat,"generalized pareto",method = "mle")},
+                               error = function(err) {return(NA)})
+  
+  inverse_gaussian<-tryCatch({ fitdist(dat,"inverse gaussian",method = "mle")},
+                             error = function(err) {return(NA)})
+  cauchy<-tryCatch({ fitdist(dat,"cauchy",method = "mle")},
+                             error = function(err) {return(NA)})
+  logistic<-tryCatch({ fitdist(dat,"logistic",method = "mle")},
+                   error = function(err) {return(NA)})
+  
+  
+  
+  
+  fits=list( normal, gamma, lognormal,weibull,log_normal, log_logistic,generalized_extreme_value,generalized_pareto,inverse_gaussian,cauchy,logistic)
+  sim={}
+  p_value={}
+  for (i in 1:11 ) { 
+    if   (!is.na (fits[[ i]][1])  ) {  
+      #sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      #p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue )
+      p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue                
+                     
+      )
+    } else {
+      sim=cbind(sim, NA )
+      p_value=cbind(p_value,NA)
+      
+    }
+  }
+  chi=rbind(sim, p_value)
+  
+  
+  colnames(chi)<- c('normal',"gamma", "lognormal",'Weibull',"log_normal","log_logistic" ,"generalized_extreme_value","generalized_pareto","inverse_gaussian" )
+  # get the logliks for each model...
+  #max_log=sapply(fits, function(i) i$loglik)
+  #max_index<- which.max( max_log )
+  max_index<- which.min( sim)
+  
+  #max_index=5
+  paras=fits[[max_index]]
+  if (max_index==1) {
+    
+    v_cdf=pnorm(x,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v1=pnorm(x1,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v2=qnorm(x2,mean=paras$estimate[1],sd=paras$estimate[2] )
+    
+  } else if (max_index==4) {
+    v_cdf=pweibull(x,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v1=pweibull(x1,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v2=qweibull(x2,shape=paras$estimate[1],scale=paras$estimate[2] )
+    
+    
+    
+  }      else if (max_index==2) {
+    
+    v_cdf=pgamma(x,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v1=pgamma(x1,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v2=qgamma(x2,shape=paras$estimate[1],rate=paras$estimate[2] )
+  }      else if (max_index==3) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }     else if (max_index==5) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }     else if (max_index==6) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }     else if (max_index==7) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }     else if (max_index==8) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }     else if (max_index==9) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }   else if (max_index==10) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }   else if (max_index==11) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }    
+  
+  results<-list (v_cdf=v_cdf,v1=v1,v2=v2 , chi=chi)
+  return(results)
+  
+  
+}
+####  
+# margin = function(x){
+#   
+# fit_n  <- fitdistr(x, "normal")
+# 
+# marginals = pnorm(x, mean=fit_n$estimate[1], sd=fit_n$estimate[2])
+# 
+# return(marginals)
+# }
+
+
+data_period1_PCA2_1 = best_fit_dist(x= data_period1_PCA2[,1])
+
+data_period1_PCA1_1 = best_fit_dist(data_period1_PCA1[,1])
+
+
+data_period1_PCA2 = cbind(data_period1_PCA2$PC1$v_cdf,data_period1_PCA2$PC2$v_cdf)
+data_period1_PCA1 = cbind(data_period1_PCA1$PC1$v_cdf,data_period1_PCA1$PC2$v_cdf)
+
+data_final_margin = cbind(data_period1_PCA1,data_period1_PCA2) %>% as.data.frame()
+colnames(data_final_margin) = c("basin_PCA1","basin_PCA2","sen_PCA1","sen_PCA2")
+# CVM = RVineStructureSelect(data_final_margin, type="CVine")
+fit= vinecop(data_final_margin, family_set =c("archimedean","gaussian"),cores=2)
+pcs=fit$pair_copulas
+
+mat=fit$structure
+vc <- vinecop_dist(pcs, mat)
+u1<-pvinecop(data_final_margin[,], vc)
+
+
+
+
+
+####################################################
+Calc_Emp_Prob <- function(D) {
+  # Length of data
+  n = length(D)
+  # Pre-assign probability array
+  P = zeros(n,1)
+  
+  # Loop through the data
+  for (i in 1:n) {
+    P[i,1] = sum( D <= D[i] )
+  }
+  
+  # Gringorten plotting position
+  Y = (P - 0.44) / (n + 0.12)
+  
+}
+
+# fit univariate cdf, select from 13 cdf candidate (no error)
+fitalldist <- function(data,X1=100) {
+  
+  require(fitdistrplus)
+  require(extRemes)
+  require(ismev)
+  require(SCI) 
+  require(goft)
+  require(gPdtest)
+  require(actuar)
+  require(evd)
+  
+  # change the same data value slightly
+  
+  # dup_data <- duplicated(data)
+  # for (i in 1:length(dup_data)) {
+  #   if (dup_data[i] == 0) {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],0,0.001)
+  #   } else {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],-0.001,0.001)
+  #   }
+  # }
+  
+  # calculate empirical CDF
+  emp <- Calc_Emp_Prob(data)
+  
+  # total 13 distributions
+  distnames <- c("gamma","exponential","weibull","normal","logistic",
+                 "log-normal","log-logistic","cauchy",
+                 "generalized extreme value","generalized pareto",
+                 "inverse gaussian")
+  
+  results <- data.frame('aic' = numeric(), 'aicc' = numeric(), 
+                        'bic' = numeric(), 'p' = numeric())
+  
+  ep_mat <- matrix( NA, length(data), 11 )
+  pdf_mat <- matrix(NA, length(data), 11 )
+  V1_mat <- matrix(NA, length(X1), 11 )
+  
+  para_list <- list()
+  
+  loop_id <- 1
+  # distribution not for negative values
+  for (i in c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    if (any(data<0)) {
+      if (i %in% c("gamma","exp","weibull","lnorm","llogis")) {
+        results[loop_id,] <- c(NA,NA,NA,NA)
+        loop_id <- loop_id + 1
+        next
+      } 
+    }
+    
+    possibleError <- tryCatch({fit <- fitdist(data,i)},error = function(e) e)
+    if (!inherits(possibleError, "error")) {
+      fit <- fitdist(data,i)
+      para <- c(as.list(fit$estimate), as.list(fit$fix.arg))
+      para_list[[loop_id]] = para
+      name <- fit$distname
+      pdistname <- paste("p", name, sep = "")
+      ddistname <- paste("d", name, sep = "")
+      # invcdf1name <- paste("q",name,sep = "")
+      
+      ep <- do.call(pdistname, c(list(data), as.list(para)))
+      pdf <- do.call(ddistname, c(list(data), as.list(para)))
+      V1 <- do.call(pdistname, c(list(X1), as.list(para)))
+      # V2 <- do.call(invcdf1name, c(list(X2), as.list(para)))
+      
+      ep_mat[,loop_id] <- ep
+      pdf_mat[,loop_id] <- pdf
+      V1_mat[,loop_id]<-V1
+      
+      aic <- fit$aic
+      aicc <- aic + 2*length(para)*(length(para)+1)/(fit$n-length(para)-1)
+      bic <- fit$bic
+      p <- ks.test(emp,ep)$p
+      
+      results[loop_id,] <- c(aic,aicc,bic,p)
+      loop_id <- loop_id + 1
+    } else {
+      results[loop_id,] <- c(NA,NA,NA,NA)
+      loop_id <- loop_id + 1
+    }
+  }
+  
+  # function to calcuate good-of-fitness 
+  calc_gof <- function(ep, emp, loop_id, results, parlen, name) {
+    res <- ep - emp
+    # sample size
+    k <- length(ep)
+    # number of parameter
+    m <- parlen
+    aic <- k * log(sum(res^2)/k) + 2*m
+    aicc <- aic + 2*m*(m+1)/(k-m-1)
+    bic <- k * log(sum(res^2)/k) + m * log(k)
+    p <- suppressWarnings(ks.test(emp,ep)$p)
+    results[loop_id,] <<- c(aic, aicc, bic, p)
+    
+    loop_id <<- loop_id + 1
+  }
+  
+  # gumbel
+  
+  # possibleError <- tryCatch({fitgumb <- dist.start(data,"gumbel")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitgumb <- dist.start(data,"gumbel")
+  #   ep <- actuar::pgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   V1 <- actuar::pgumbel(X1, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   pdf <- actuar::dgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   para_list[[loop_id]] = list( alpha = fitgumb$loc, scale = fitgumb$scale )
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "gumbel"
+  #   calc_gof(ep, emp, loop_id, results, 2, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # generalized extreme value
+  possibleError <- tryCatch({fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')
+    gevpar <- fitgev$results
+    ep <- evd::pgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    pdf <- evd::dgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    V1<-evd::pgev(X1, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    para_list[[loop_id]] = list(shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    name <- "gev"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  ## generalized pareto, use min(data) as the threshold of gpd
+  possibleError <- tryCatch({fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')
+    gpdpar <- fitgpd$results
+    ep <- evd::pgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    pdf <- evd::dgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    V1 <- evd::pgpd(X1, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    para_list[[loop_id]] = list(loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "gpd"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  # Three-parameter Gamma (Pearson Type III)
+  # possibleError <- tryCatch({fitpe3 <- dist.start(data,"pe3")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitpe3 <- dist.start(data,"pe3")
+  #   ep <- SCI::ppe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   pdf <- SCI::dpe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   V1<-SCI::ppe3(X1, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   para_list[[loop_id]] = list(shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "pe3"
+  #   calc_gof(ep, emp, loop_id, results, 3, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # inverse gaussian
+  possibleError <- tryCatch({fitig <- goft::ig_fit(data)},error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitig <- goft::ig_fit(data)
+    ep <- actuar::pinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    pdf <- actuar::dinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    V1 <- actuar::pinvgauss(X1, mean = fitig[1,1],shape = fitig[2,1])
+    para_list[[loop_id]] = list( mean = fitig[1,1],shape = fitig[2,1] )
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "invgauss"
+    calc_gof(ep, emp, loop_id, results, 2, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  results['family'] = c("gamma","exp","weibull","norm","logis","lnorm","llogis",
+                        "cauchy","gev","gpd","invgauss")
+  
+  # reorder results according to p-value and AIC
+  results2 <- results[!is.na(results$p),]
+  results2 <- results2[order(rank(results2$p), -rank(results2$aic), decreasing = T), ]
+  rownames(results2) <- NULL
+  
+  # output
+  PD_name <- results2[results2$p>0.1,"family"][1]
+  if (is.na(PD_name)) {
+    warning('The fitting of univariate distribution is not significant !')
+    PD_name <- results2[1,'family']
+  }
+  PD_id <- which( results$family == PD_name )
+  ep <- ep_mat[,PD_id]
+  pdf <- pdf_mat[,PD_id]
+  V1 <- V1_mat[,PD_id]
+  
+  para <- para_list[[PD_id]]
+  
+  # check whether any NaN in ep and pdf
+  loop_id = 1
+  while( any(is.na(ep)) | any(is.na(pdf)) | any(is.na(V1)) ) {
+    PD_name <- results2[results2$p>0.1,"family"][loop_id + 1]
+    PD_id <- which( results$family == PD_name )
+    ep <- ep_mat[,PD_id]
+    pdf <- pdf_mat[,PD_id]
+    V1 <- V1_mat[,PD_id]
+  }
+  para <- para_list[[PD_id]]
+  
+  # parameteric bootstrap for uncertainty
+  if (PD_name %in% c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    f1 <- fitdist(data,PD_name)
+    bnor <- bootdist(f1)
+    resboot <- bnor$estim
+  }  else if (PD_name=='gev') {
+    gevpar <- fitgev$results
+    rdata <- evd::rgev(1001*length(data),shape = as.numeric(gevpar[3]),loc =as.numeric(gevpar[1]),scale = as.numeric(gevpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GEV',method = 'Lmoments')
+      par <- res$results
+      return(c(as.numeric(par[3]),as.numeric(par[1]),as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("shape","loc","scale")
+  } else if (PD_name=='gpd') {
+    gpdpar <- fitgpd$results
+    rdata <- evd::rgpd(1001*length(data),loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GP',method = 'Lmoments')
+      par <- res$results
+      return(c(min(rdata[,iter])-1, as.numeric(par[1]), as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("loc","scale","shape")
+  }  else if (PD_name=='invgauss') {
+    rdata <- actuar::rinvgauss(1001*length(data), mean = fitig[1,1],shape = fitig[2,1])
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- goft::ig_fit(rdata[,iter])
+      return(c(res[1,1],res[2,1]))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("mean","shape")
+  }
+  
+  return(list("PD_name"=PD_name,"ep"=ep,"v1"=V1,"pdf"=pdf, "emp"=emp, "STAT"=results2, "para"=para, parboot=resboot))
+  
+}
+
+
+cdf_u1<-fitalldist(u1,1)$ep
+
+
+############################################
+n <- 280*4 # 
+U <- rvinecop(n,vc)
+X <- qnorm(U)
+K.n <- Kn(cdf_u1, x=X)
+
+inverse_normal={}
+inverse_normal<-qnorm(K.n, mean=0, sd =0.5)
+
+###########################################################period 2 
+setwd("E:\\Global_Stablity\\CMIP6_data\\Questions")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+data_period1_1 = dta %>% dplyr::select(UID,WY_2051_2100,AI_2051_2100,m_2)
+data_period1_2 = dta %>% dplyr::select(UID,sen_2,cli_2,m2_2,cli2_2)
+
+#############PCA_period1_pca1_pca2
+data_period1_PCA1 <- prcomp(data_period1_1[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA1$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA1 = data_period1_PCA1$x[,1:2]
+
+#############PCA_period1_pca3_pca4
+data_period1_PCA2 <- prcomp(data_period1_2[,-1], scale = TRUE,center = TRUE, retx = T)
+
+my_pca.var <- data_period1_PCA2$sdev ^ 2
+my_pca.var / sum(my_pca.var)
+
+data_period1_PCA2 = data_period1_PCA2$x[,1:2]
+##############
+# best_fit_dist<-function (x,x1=10,x2=0.5) { 
+#   set.seed(1)
+#   # we know these data are normally distributed... 
+#   
+#   # let's compute some fits...
+#   require(MASS)
+#   dat=x
+#   gamma<-tryCatch({  fitdist(dat,"gamma",method = "mle")}, 
+#                    error = function(err) {return(NA)})
+#   
+#   exponential<-tryCatch({ fitdist(dat,"exponential",method = "mle")}, 
+#                   error = function(err) {return(NA)})
+#   
+#   weibull<-tryCatch({  fitdist(dat,"weibull",method = "mle")}, 
+#                       error = function(err) {return(NA)})
+#   
+#   normal<-tryCatch({ fitdist(dat,"normal",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   logistic<-tryCatch({ fitdist(dat,"logistic",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   log_normal<-tryCatch({ fitdist(dat,"log-normal",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   log_logistic<-tryCatch({ fitdist(dat,"log-logistic",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   cauchy<-tryCatch({ fitdist(dat,"cauchy",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   generalized_extreme_value<-tryCatch({ fitdist(dat,"generalized extreme value",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   generalized_pareto<-tryCatch({ fitdist(dat,"generalized pareto",method = "mle")}, 
+#                     error = function(err) {return(NA)})
+#   
+#   inverse_gaussian<-tryCatch({ fitdist(dat,"inverse gaussian",method = "mle")}, 
+#                                error = function(err) {return(NA)})
+#   
+#   
+#   fits=list(gamma,exponential,weibull,normal,logistic,
+#             log_normal,log_logistic,cauchy,
+#             generalized_extreme_value,generalized_pareto,
+#             inverse_gaussian)
+#   sim={}
+#   p_value={}
+#   for (i in 1:11 ) { 
+#     if   (!is.na (fits[[ i]][1])  ) {  
+#       #sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+#       sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+#       #p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue )
+#       p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue                
+#                      
+#       )
+#     } else {
+#       sim=cbind(sim, NA )
+#       p_value=cbind(p_value,NA)
+#       
+#     }
+#   }
+#   chi=rbind(sim, p_value)
+#   
+#   
+#   colnames(chi)<- c("gamma","exponential","weibull","normal","logistic",
+#                     "log_normal","log_logistic","cauchy",
+#                     "generalized_extreme_value","generalized_pareto",
+#                     "inverse_gaussian" )
+#   # get the logliks for each model...
+#   #max_log=sapply(fits, function(i) i$loglik)
+#   #max_index<- which.max( max_log )
+#   max_index<- which.min( sim)
+#   
+#   #max_index=5
+#   paras=fits[[max_index]]
+#   if (max_index==1) {
+#     
+#     v_cdf=pnorm(x,mean=paras$estimate[1],sd=paras$estimate[2] )
+#     v1=pnorm(x1,mean=paras$estimate[1],sd=paras$estimate[2] )
+#     v2=qnorm(x2,mean=paras$estimate[1],sd=paras$estimate[2] )
+#     
+#   } else if (max_index==4) {
+#     v_cdf=pweibull(x,shape=paras$estimate[1],scale=paras$estimate[2] )
+#     v1=pweibull(x1,shape=paras$estimate[1],scale=paras$estimate[2] )
+#     v2=qweibull(x2,shape=paras$estimate[1],scale=paras$estimate[2] )
+#     
+#     
+#     
+#   }      else if (max_index==2) {
+#     
+#     v_cdf=pgamma(x,shape=paras$estimate[1],rate=paras$estimate[2] )
+#     v1=pgamma(x1,shape=paras$estimate[1],rate=paras$estimate[2] )
+#     v2=qgamma(x2,shape=paras$estimate[1],rate=paras$estimate[2] )
+#   }      else if (max_index==3) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==5) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==6) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==7) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==8) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==9) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==10) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     else if (max_index==11) {
+#     
+#     v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#     v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+#   }     
+#   
+#   results<-list (v_cdf=v_cdf,v1=v1,v2=v2 , chi=chi)
+#   return(results)
+#   
+#   
+# }    
+best_fit_dist<-function (x,x1=10,x2=0.5) { 
+  set.seed(1)
+  # we know these data are normally distributed... 
+  
+  # let's compute some fits...
+  require(MASS)
+  dat=x
+  normal<-tryCatch({  fitdist(dat,"norm",method = "mle")}, 
+                   error = function(err) {return(NA)})
+  
+  gamma<-tryCatch({ fitdist(dat,"gamma",method = "mle")}, 
+                  error = function(err) {return(NA)})
+  
+  lognormal<-tryCatch({  fitdist(dat,"lnorm",method = "mle")}, 
+                      error = function(err) {return(NA)})
+  weibull<-tryCatch({ fitdist(dat,"weibull",method = "mle")}, 
+                    error = function(err) {return(NA)})
+  
+  
+  
+  fits=list( normal, gamma, lognormal,weibull )
+  sim={}
+  p_value={}
+  for (i in 1:4 ) { 
+    if   (!is.na (fits[[ i]][1])  ) {  
+      #sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      sim=cbind(sim, gofstat(fits[[ i]]  )$chisq )
+      #p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue )
+      p_value =cbind(p_value, gofstat(fits[[ i]]  )$chisqpvalue                
+                     
+      )
+    } else {
+      sim=cbind(sim, NA )
+      p_value=cbind(p_value,NA)
+      
+    }
+  }
+  chi=rbind(sim, p_value)
+  
+  
+  colnames(chi)<- c('normal',"gamma", "lognormal",'Weibull' )
+  # get the logliks for each model...
+  #max_log=sapply(fits, function(i) i$loglik)
+  #max_index<- which.max( max_log )
+  max_index<- which.min( sim)
+  
+  #max_index=5
+  paras=fits[[max_index]]
+  if (max_index==1) {
+    
+    v_cdf=pnorm(x,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v1=pnorm(x1,mean=paras$estimate[1],sd=paras$estimate[2] )
+    v2=qnorm(x2,mean=paras$estimate[1],sd=paras$estimate[2] )
+    
+  } else if (max_index==4) {
+    v_cdf=pweibull(x,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v1=pweibull(x1,shape=paras$estimate[1],scale=paras$estimate[2] )
+    v2=qweibull(x2,shape=paras$estimate[1],scale=paras$estimate[2] )
+    
+    
+    
+  }      else if (max_index==2) {
+    
+    v_cdf=pgamma(x,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v1=pgamma(x1,shape=paras$estimate[1],rate=paras$estimate[2] )
+    v2=qgamma(x2,shape=paras$estimate[1],rate=paras$estimate[2] )
+  }      else if (max_index==3) {
+    
+    v_cdf= plnorm(x,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v1= plnorm(x1,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+    v2= qlnorm(x2,meanlog=paras$estimate[1],sdlog=paras$estimate[2] )
+  }    
+  
+  results<-list (v_cdf=v_cdf,v1=v1,v2=v2 , chi=chi)
+  return(results)
+  
+  
+}
+####  
+# margin = function(x){
+#   
+# fit_n  <- fitdistr(x, "normal")
+# 
+# marginals = pnorm(x, mean=fit_n$estimate[1], sd=fit_n$estimate[2])
+# 
+# return(marginals)
+# }
+
+
+
+data_period1_PCA2 = apply(data_period1_PCA2,2,best_fit_dist)
+data_period1_PCA1 = apply(data_period1_PCA1,2,best_fit_dist)
+
+data_period1_PCA2 = cbind(data_period1_PCA2$PC1$v_cdf,data_period1_PCA2$PC2$v_cdf)
+data_period1_PCA1 = cbind(data_period1_PCA1$PC1$v_cdf,data_period1_PCA1$PC2$v_cdf)
+
+data_final_margin = cbind(data_period1_PCA1,data_period1_PCA2) %>% as.data.frame()
+colnames(data_final_margin) = c("basin_PCA1","basin_PCA2","sen_PCA1","sen_PCA2")
+CVM = RVineStructureSelect(data_final_margin, type="CVine")
+fit= vinecop(data_final_margin, family_set =c("archimedean","gaussian"),cores=2)
+
+pcs=fit$pair_copulas
+mat=fit$structure
+vc <- vinecop_dist(pcs, mat)
+u2<-pvinecop(data_final_margin[,], vc)
+
+data_final = cbind(data_period1_1$UID,u1,u2)
+
+write.csv(data_final, "CMIP6_basins_stable.csv",row.names=T)
+
+data_final_plot = reshape2::melt(data_final[,2:3])
+
+ggplot(data =data_final_plot,aes(x = Var2,y= value,fill = Var2))+
+  geom_boxplot()+ theme_bw()+ylim(0,0.2)+
+  labs(x="Forest Increase", y = "d2(R/P)/dmd(P/PET)")+
+  theme(axis.text = element_text(face="plain",color="black", size=12),
+        axis.title=element_text(size=12,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=12))
+
+
+
+
+
+
+
+
+####################################################
+Calc_Emp_Prob <- function(D) {
+  # Length of data
+  n = length(D)
+  # Pre-assign probability array
+  P = zeros(n,1)
+  
+  # Loop through the data
+  for (i in 1:n) {
+    P[i,1] = sum( D <= D[i] )
+  }
+  
+  # Gringorten plotting position
+  Y = (P - 0.44) / (n + 0.12)
+  
+}
+
+# fit univariate cdf, select from 13 cdf candidate (no error)
+fitalldist <- function(data,X1) {
+  
+  require(fitdistrplus)
+  require(extRemes)
+  require(ismev)
+  require(SCI) 
+  require(goft)
+  require(gPdtest)
+  require(actuar)
+  require(evd)
+  
+  # change the same data value slightly
+  
+  # dup_data <- duplicated(data)
+  # for (i in 1:length(dup_data)) {
+  #   if (dup_data[i] == 0) {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],0,0.001)
+  #   } else {
+  #     data[data=dup_data[i]] = data[data=dup_data[i]] + runif(data[data=dup_data[i]],-0.001,0.001)
+  #   }
+  # }
+  
+  # calculate empirical CDF
+  emp <- Calc_Emp_Prob(data)
+  
+  # total 13 distributions
+  distnames <- c("gamma","exponential","weibull","normal","logistic",
+                 "log-normal","log-logistic","cauchy",
+                 "generalized extreme value","generalized pareto",
+                 "inverse gaussian")
+  
+  results <- data.frame('aic' = numeric(), 'aicc' = numeric(), 
+                        'bic' = numeric(), 'p' = numeric())
+  
+  ep_mat <- matrix( NA, length(data), 11 )
+  pdf_mat <- matrix(NA, length(data), 11 )
+  V1_mat <- matrix(NA, length(X1), 11 )
+  
+  para_list <- list()
+  
+  loop_id <- 1
+  # distribution not for negative values
+  for (i in c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    if (any(data<0)) {
+      if (i %in% c("gamma","exp","weibull","lnorm","llogis")) {
+        results[loop_id,] <- c(NA,NA,NA,NA)
+        loop_id <- loop_id + 1
+        next
+      } 
+    }
+    
+    possibleError <- tryCatch({fit <- fitdist(data,i)},error = function(e) e)
+    if (!inherits(possibleError, "error")) {
+      fit <- fitdist(data,i)
+      para <- c(as.list(fit$estimate), as.list(fit$fix.arg))
+      para_list[[loop_id]] = para
+      name <- fit$distname
+      pdistname <- paste("p", name, sep = "")
+      ddistname <- paste("d", name, sep = "")
+      # invcdf1name <- paste("q",name,sep = "")
+      
+      ep <- do.call(pdistname, c(list(data), as.list(para)))
+      pdf <- do.call(ddistname, c(list(data), as.list(para)))
+      V1 <- do.call(pdistname, c(list(X1), as.list(para)))
+      # V2 <- do.call(invcdf1name, c(list(X2), as.list(para)))
+      
+      ep_mat[,loop_id] <- ep
+      pdf_mat[,loop_id] <- pdf
+      V1_mat[,loop_id]<-V1
+      
+      aic <- fit$aic
+      aicc <- aic + 2*length(para)*(length(para)+1)/(fit$n-length(para)-1)
+      bic <- fit$bic
+      p <- ks.test(emp,ep)$p
+      
+      results[loop_id,] <- c(aic,aicc,bic,p)
+      loop_id <- loop_id + 1
+    } else {
+      results[loop_id,] <- c(NA,NA,NA,NA)
+      loop_id <- loop_id + 1
+    }
+  }
+  
+  # function to calcuate good-of-fitness 
+  calc_gof <- function(ep, emp, loop_id, results, parlen, name) {
+    res <- ep - emp
+    # sample size
+    k <- length(ep)
+    # number of parameter
+    m <- parlen
+    aic <- k * log(sum(res^2)/k) + 2*m
+    aicc <- aic + 2*m*(m+1)/(k-m-1)
+    bic <- k * log(sum(res^2)/k) + m * log(k)
+    p <- suppressWarnings(ks.test(emp,ep)$p)
+    results[loop_id,] <<- c(aic, aicc, bic, p)
+    
+    loop_id <<- loop_id + 1
+  }
+  
+  # gumbel
+  
+  # possibleError <- tryCatch({fitgumb <- dist.start(data,"gumbel")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitgumb <- dist.start(data,"gumbel")
+  #   ep <- actuar::pgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   V1 <- actuar::pgumbel(X1, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   pdf <- actuar::dgumbel(data, alpha = fitgumb$loc, scale = fitgumb$scale)
+  #   para_list[[loop_id]] = list( alpha = fitgumb$loc, scale = fitgumb$scale )
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "gumbel"
+  #   calc_gof(ep, emp, loop_id, results, 2, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # generalized extreme value
+  possibleError <- tryCatch({fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgev <- extRemes::fevd(data, threshold = min(data)-1, type = 'GEV',method = 'Lmoments')
+    gevpar <- fitgev$results
+    ep <- evd::pgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    pdf <- evd::dgev(data, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    V1<-evd::pgev(X1, shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    para_list[[loop_id]] = list(shape = as.numeric(gevpar[3]), loc =as.numeric(gevpar[1]), scale = as.numeric(gevpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    name <- "gev"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  ## generalized pareto, use min(data) as the threshold of gpd
+  possibleError <- tryCatch({fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')},
+                            error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitgpd <- extRemes::fevd(data, threshold = min(data)-1, type = 'GP',method = 'Lmoments')
+    gpdpar <- fitgpd$results
+    ep <- evd::pgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    pdf <- evd::dgpd(data, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    V1 <- evd::pgpd(X1, loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    para_list[[loop_id]] = list(loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "gpd"
+    calc_gof(ep, emp, loop_id, results, 3, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  # Three-parameter Gamma (Pearson Type III)
+  # possibleError <- tryCatch({fitpe3 <- dist.start(data,"pe3")},error = function(e) e)
+  # if (!inherits(possibleError, "error")) {
+  #   fitpe3 <- dist.start(data,"pe3")
+  #   ep <- SCI::ppe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   pdf <- SCI::dpe3(data, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   V1<-SCI::ppe3(X1, shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   para_list[[loop_id]] = list(shape=fitpe3$shape, scale=fitpe3$scale, location=fitpe3$location)
+  #   ep_mat[,loop_id] <- ep
+  #   pdf_mat[,loop_id] <- pdf
+  #   V1_mat[,loop_id]<-V1
+  #   
+  #   name <- "pe3"
+  #   calc_gof(ep, emp, loop_id, results, 3, name)
+  # } else {
+  #   results[loop_id,] <- c(NA,NA,NA,NA)
+  #   loop_id <- loop_id + 1
+  # }
+  
+  # inverse gaussian
+  possibleError <- tryCatch({fitig <- goft::ig_fit(data)},error = function(e) e)
+  if (!inherits(possibleError, "error")) {
+    fitig <- goft::ig_fit(data)
+    ep <- actuar::pinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    pdf <- actuar::dinvgauss(data, mean = fitig[1,1],shape = fitig[2,1])
+    V1 <- actuar::pinvgauss(X1, mean = fitig[1,1],shape = fitig[2,1])
+    para_list[[loop_id]] = list( mean = fitig[1,1],shape = fitig[2,1] )
+    ep_mat[,loop_id] <- ep
+    pdf_mat[,loop_id] <- pdf
+    V1_mat[,loop_id]<-V1
+    
+    name <- "invgauss"
+    calc_gof(ep, emp, loop_id, results, 2, name)
+  } else {
+    results[loop_id,] <- c(NA,NA,NA,NA)
+    loop_id <- loop_id + 1
+  }
+  
+  results['family'] = c("gamma","exp","weibull","norm","logis","lnorm","llogis",
+                        "cauchy","gev","gpd","invgauss")
+  
+  # reorder results according to p-value and AIC
+  results2 <- results[!is.na(results$p),]
+  results2 <- results2[order(rank(results2$p), -rank(results2$aic), decreasing = T), ]
+  rownames(results2) <- NULL
+  
+  # output
+  PD_name <- results2[results2$p>0.1,"family"][1]
+  if (is.na(PD_name)) {
+    warning('The fitting of univariate distribution is not significant !')
+    PD_name <- results2[1,'family']
+  }
+  PD_id <- which( results$family == PD_name )
+  ep <- ep_mat[,PD_id]
+  pdf <- pdf_mat[,PD_id]
+  V1 <- V1_mat[,PD_id]
+  
+  para <- para_list[[PD_id]]
+  
+  # check whether any NaN in ep and pdf
+  loop_id = 1
+  while( any(is.na(ep)) | any(is.na(pdf)) | any(is.na(V1)) ) {
+    PD_name <- results2[results2$p>0.1,"family"][loop_id + 1]
+    PD_id <- which( results$family == PD_name )
+    ep <- ep_mat[,PD_id]
+    pdf <- pdf_mat[,PD_id]
+    V1 <- V1_mat[,PD_id]
+  }
+  para <- para_list[[PD_id]]
+  
+  # parameteric bootstrap for uncertainty
+  if (PD_name %in% c("gamma","exp","weibull","norm","logis","lnorm","llogis","cauchy")) {
+    f1 <- fitdist(data,PD_name)
+    bnor <- bootdist(f1)
+    resboot <- bnor$estim
+  }  else if (PD_name=='gev') {
+    gevpar <- fitgev$results
+    rdata <- evd::rgev(1001*length(data),shape = as.numeric(gevpar[3]),loc =as.numeric(gevpar[1]),scale = as.numeric(gevpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GEV',method = 'Lmoments')
+      par <- res$results
+      return(c(as.numeric(par[3]),as.numeric(par[1]),as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("shape","loc","scale")
+  } else if (PD_name=='gpd') {
+    gpdpar <- fitgpd$results
+    rdata <- evd::rgpd(1001*length(data),loc = min(data)-1, scale = as.numeric(gpdpar[1]), shape = as.numeric(gpdpar[2]))
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- extRemes::fevd(rdata[, iter], threshold = min(rdata)-1, type = 'GP',method = 'Lmoments')
+      par <- res$results
+      return(c(min(rdata[,iter])-1, as.numeric(par[1]), as.numeric(par[2])))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("loc","scale","shape")
+  }  else if (PD_name=='invgauss') {
+    rdata <- actuar::rinvgauss(1001*length(data), mean = fitig[1,1],shape = fitig[2,1])
+    dim(rdata) <- c(length(data), 1001)
+    func <- function(iter) {
+      res <- goft::ig_fit(rdata[,iter])
+      return(c(res[1,1],res[2,1]))
+    }
+    resboot <- t(sapply(1:1001, func))
+    resboot <- as.data.frame(resboot); colnames(resboot) = c("mean","shape")
+  }
+  
+  return(list("PD_name"=PD_name,"ep"=ep,"v1"=V1,"pdf"=pdf, "emp"=emp, "STAT"=results2, "para"=para, parboot=resboot))
+  
+}
+
+
+cdf_u1<-fitalldist(u1,1)$ep
+
+#################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#####################################################################################Renner water and energy framework
+##############################packages
+library(reshape2)
+library(tidyverse)
+library(bootstrap)
+library(QuantPsyc)  
+library(relaimpo)
+library(psych)
+library(ggplot2)
+library(nlme)
+library(ape)
+library(MuMIn)
+library(ggstatsplot)
+library(extrafont)
+windowsFonts(Times=windowsFont("TT Arial"))
+
+##############################import
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+data<-read.table("CMIP6_558.csv",header=T, na.strings = "Na", sep=",")
+data = na.omit(data)
+data$f_1901_1950 = data$EI_1901_1950/data$DI_1901_1950
+data$f_2051_2100 = data$EI_2051_2100/data$DI_2051_2100
+data$q_1901_1950 = data$EI_1901_1950
+data$q_2051_2100 = data$EI_2051_2100
+
+
+
+C_land = function (q0,q1,f0,f1,DI0) {
+  
+  fb = (q0*q1*f0 +(f0^2)*f1)/(f0^2+q0^2)
+  
+  qb = DI0*fb
+  
+  C_land = (1-qb) - (1-q0)
+  
+  return(C_land)
+  
+} 
+
+C_climate = function (q0,q1,f0,f1,DI0) {
+  
+  fb = (q0*q1*f0 +(f0^2)*f1)/(f0^2+q0^2)
+  
+  qb = DI0*fb
+  
+  C_climate = (1-q1) - (1-qb)
+  
+  return(C_climate)
+  
+} 
+
+
+data$climate = C_climate(q0 = data$q_1901_1950, q1 =  data$q_2051_2100, f0 = data$f_1901_1950, f1 = data$f_2051_2100, DI0 = data$DI_1901_1950)
+
+data$land = C_land(q0 = data$q_1901_1950, q1 =  data$q_2051_2100, f0 = data$f_1901_1950, f1 = data$f_2051_2100, DI0 = data$DI_1901_1950)
+
+
+data$land_climate = data$land + data$climate
+
+data$delta_WY = data$EI_1901_1950 - data$EI_2051_2100
+  
+write.csv(data, "CMIP6_water_energy_WY.csv",row.names=T)
+############################################################################################
+setwd("E:\\Global_Stablity\\CMIP6_data")
+data<-read.table("CMIP6_all_data.csv",header=T, na.strings = "Na", sep=",")
+
+dt = na.omit(data)
+
+dt_em = dt %>% dplyr::select(em_1,em_2) %>% as.data.frame %>% reshape2::melt()
+
+ggplot(dt, aes(x=delta_stable))+
+  geom_density(linetype="solid",color = "darkgreen",fill="lightgreen",size =1)+
+  geom_vline(xintercept=0,
+             color="darkgreen", linetype="dashed", size=1)+
+  labs(x="delta_em", y = "Density")+ theme_bw()+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=20))
+
+ggplot(dt, aes(x=delta_ecli))+
+  geom_density(linetype="solid",color = "darkblue",fill="lightblue",size =1)+
+  geom_vline(xintercept=0,
+             color="darkblue", linetype="dashed", size=1)+
+  labs(x="delta_ecli", y = "Density")+ theme_bw()+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="none",strip.text = element_text(size=20))
+
+##############################################
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000),
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+dt$AI_Zone <- sapply(dt$DI_all, ApplyQuintiles1)
+##########################
+se <- function(x, na.rm=FALSE) {
+  if (na.rm) x <- na.omit(x)
+  sqrt(var(x)/length(x))
+}
+CZ_Zone_mean = dt %>%
+  group_by(AI_Zone) %>%
+  summarise(mean = mean(delta_stable, na.rm = TRUE))
+
+CZ_Zone_se = dt %>%
+  group_by(AI_Zone) %>%
+  summarise(se = se(delta_stable, na.rm = TRUE))
+
+stack = merge(CZ_Zone_mean,CZ_Zone_se)
+
+ggplot(data =stack,aes(x = AI_Zone,y=mean))+
+  geom_bar(stat = "identity",color = "black",position=position_dodge())+ theme_bw()+
+  geom_errorbar(aes(ymin=mean-2*se, ymax=mean+2*se), width=.2,
+                position=position_dodge(.9))+ labs(x="Climate Zone", y = "Stable")+
+  theme(axis.text = element_text(face="plain",color="black", size=20),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+
+#################################diricte and indircte impact
+setwd("F:\\NF_PF\\NF_PF_basins_WY\\Arid\\CMIP6_data")
+dta<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+dta$DI_1901_1950 = 1/dta$AI_1901_1950
+dta$DI_2051_2100 = 1/dta$AI_2051_2100
+
+Qpart <- function(e1,e2,x2,x1) {
+  s = ((e1+e2)/2)*(x2-x1)
+  return(s)
+}
+
+Q_m <- Qpart(e1=dta$sen_1,e2=dta$sen_2,x2 = dta$m_2,x1 = dta$m_1)
+
+Q_cli <- Qpart(e1=dta$cli_1,e2=dta$cli_2,x2 = dta$AI_2051_2100,x1 = dta$AI_1901_1950)
+
+Q_direct <- function(e1,x2,x1) {
+  s = (e1)*(x2-x1)
+  return(s)
+}
+
+Q_m_direct <- Q_direct(e1=dta$sen_1,x2 = dta$m_2,x1 = dta$m_1)
+
+Q_cli_direct <- Q_direct(e1=dta$cli_1,x2 = dta$AI_2051_2100,x1 = dta$AI_1901_1950)
+
+data_Q_all = cbind(dta,Q_m,Q_cli,Q_m_direct,Q_cli_direct)
+
+data_Q_all$C_m_directe = abs(data_Q_all$Q_m_direct)/(abs(data_Q_all$Q_m_direct)+abs(data_Q_all$Q_m - data_Q_all$Q_m_direct))
+data_Q_all$C_m_indirecte = abs(data_Q_all$Q_m - data_Q_all$Q_m_direct)/(abs(data_Q_all$Q_m_direct)+abs(data_Q_all$Q_m - data_Q_all$Q_m_direct))
+
+data_Q_all$C_cli_directe = abs(data_Q_all$Q_cli_direct)/(abs(data_Q_all$Q_cli_direct) + abs(data_Q_all$Q_cli - data_Q_all$Q_cli_direct))
+data_Q_all$C_cli_indirecte = abs(data_Q_all$Q_cli - data_Q_all$Q_cli_direct)/(abs(data_Q_all$Q_cli_direct) + abs(data_Q_all$Q_cli - data_Q_all$Q_cli_direct))
+
+write.csv(data_Q_all, "CMIP6_directe_indirect_abs.csv",row.names=F)
+
+##############################################
+setwd("E:\\Global_Stablity\\CMIP6_data")
+data_Q_all<-read.table("CMIP6_directe_indirect_abs.csv",header=T, na.strings = "Na", sep=",")
+
+data_Q_all$DI = (data_Q_all$DI_1901_1950 + data_Q_all$DI_2051_2100)/2
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data_Q_all$AI_Zone <- sapply(data_Q_all$DI, ApplyQuintiles1)
+
+############################
+fun_mean <- function(x){return(round(data.frame(y=median(x),label=median(x,na.rm=T)),digit=2))}
+
+para_m = data_Q_all %>% dplyr::select(AI_Zone,C_m_directe,C_m_indirecte) %>% reshape2::melt()
+
+ggplot(data =para_m,aes(x = AI_Zone,y=value,fill = variable,label=sprintf("%0.2f", round(value, digits = 2))))+
+  geom_boxplot(size = 0.3,position=position_dodge())+ theme_classic()+
+  labs(x="Climate zones", y = "Ratio")+scale_fill_manual(values=c("#D45C41", "#3689AE"))+
+  stat_summary(fun.data = fun_mean, geom="text", vjust=-0.7,position=position_dodge(width = 0.75))+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+
+para_cli = data_Q_all %>% dplyr::select(AI_Zone,C_cli_directe,C_cli_indirecte) %>% reshape2::melt()
+
+ggplot(data =para_cli,aes(x = AI_Zone,y=value,fill = variable))+
+  geom_boxplot(size = 0.3,position=position_dodge())+ theme_classic()+scale_fill_manual(values=c("#D45C41", "#3689AE"))+
+  labs(x="Climate zones", y = "Cm - CP/PET")+
+  stat_summary(fun.data = fun_mean, geom="text", vjust=-0.7,position=position_dodge(width = 0.75))+
+  theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=20,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=18))
+
+# data_Q_all$delta_m = data_Q_all$m_2 - data_Q_all$m_1
+# data_Q_all$delta_em = data_Q_all$sen_2 - data_Q_all$sen_1
+# 
+# ggplot(data =data_Q_all,aes(x = delta_em,y=delta_m))+
+#   geom_point()+geom_smooth(method = "lm")+
+#   theme(axis.text = element_text(face="plain",color="black", size=20),axis.text.x=element_text(angle=60),
+#         axis.title=element_text(size=20,face="bold",color="black") ,
+#         legend.position="right",strip.text = element_text(size=18))
+
+############################################################Analysis for the delta value
+setwd("E:\\Global_Stablity\\CMIP6_data")
+data_Q_all<-read.table("CMIP6_parameter.csv",header=T, na.strings = "Na", sep=",")
+
+data = data_Q_all[,24:28] %>%reshape2::melt()
+
+ggplot(data =data,aes(x = variable, y=value))+
+  geom_boxplot(outlier.shape = NA, size = 0.3,position=position_dodge())+ theme_classic()+
+  labs(x=" ", y = "Change values")+ylim(-0.2,0.2)+
+  stat_summary(fun=mean, colour="darkred", geom="point", 
+               shape=18, size=3, show.legend=FALSE)+
+  theme(axis.text = element_text(face="plain",color="black", size=13),axis.text.x=element_text(angle=60),
+        axis.title=element_text(size=13,face="bold",color="black") ,
+        legend.position="right",strip.text = element_text(size=13))
+
+t.test(data$delta_sen_m)
+
+t.test(data$delta_sen_cli)
+
+t.test(data$delta_sen2_m)
+
+t.test(data$delta_cli2)
+
+t.test(data$delta_m_cli)
+
+mean(data$delta_sen_m)
+
+mean(data$delta_sen_cli)
+
+mean(data$delta_sen2_m)
+
+mean(data$delta_cli2)
+
+mean(data$delta_m_cli)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############################for statistics writing
+setwd("E:\\Global_Stablity\\CMIP6_data")
+data_Q_all<-read.table("CMIP6_all_data.csv",header=T, na.strings = "", sep=",")
+ApplyQuintiles1 <- function(x) {
+  cut(x, breaks=c(0,1,1.5,4,16,1000), 
+      labels=c("Humid","Semi-humid","semi-arid","Arid","Ex-arid"), include.lowest=TRUE)
+}
+data_Q_all$AI_Zone <- sapply(data_Q_all$DI, ApplyQuintiles1)
+
+data_Q_all = na.omit(data_Q_all)
+humid = data_Q_all %>% filter(data_Q_all$AI_Zone %in% c("Humid","Semi-humid") & data_Q_all$delta_WY > 0) 
+ 
+arid = data_Q_all %>% filter(data_Q_all$AI_Zone %in% c("semi-arid","Arid","Ex-arid") & data_Q_all$delta_WY > 0) 
+
+
+CC = data_Q_all %>% filter(data_Q_all$C_m > 0.8) 
+
+CC_arid = data_Q_all %>% filter(data_Q_all$C_m > 0.8 & data_Q_all$AI_Zone %in% c("semi-arid","Arid","Ex-arid")) 
+
+
+C_l = data_Q_all %>% filter(data_Q_all$C_cli > 0.8) 
+
+Cl_arid = data_Q_all %>% filter(data_Q_all$C_cli > 0.8 & data_Q_all$AI_Zone %in% c("semi-arid","Arid","Ex-arid")) 
+
+mean(data_Q_all$delta_em)
+
+mean(data_Q_all$delta_ecli)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
